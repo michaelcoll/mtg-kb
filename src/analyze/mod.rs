@@ -16,7 +16,7 @@ const REQUIRED_DECK_SIZE: u32 = 100;
 /// uniquement pour l'ambiguïté de Commandant (0 ou 2+) : tout le reste
 /// (Cartes non résolues, écarts de validation) est reporté dans le résultat
 /// sans bloquer l'analyse, conformément à l'ADR "kb calcule, Claude juge".
-pub fn run(input: &str, db: &CardsDb) -> Result<AnalyzeResult> {
+pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Result<AnalyzeResult> {
     let decklist = parser::parse(input);
 
     if decklist.commander.is_empty() {
@@ -97,12 +97,12 @@ pub fn run(input: &str, db: &CardsDb) -> Result<AnalyzeResult> {
             *role_counts.entry(role.clone()).or_insert(0) += resolved.quantity;
         }
     }
-    let thresholds = metrics::Thresholds::default();
     weaknesses.extend(metrics::role_weaknesses(
         &role_counts,
         mana_base.land_count,
-        &thresholds,
+        thresholds,
     ));
+    weaknesses.extend(metrics::curve_weaknesses(&mana_curve, thresholds));
 
     let synergies = find_synergies(&cards);
 
@@ -112,7 +112,7 @@ pub fn run(input: &str, db: &CardsDb) -> Result<AnalyzeResult> {
         .flat_map(|c| c.themes.iter().cloned())
         .collect();
     deck_themes.extend(themes::detect_themes(&commander));
-    let weak_roles = metrics::weak_role_names(&role_counts, &thresholds);
+    let weak_roles = metrics::weak_role_names(&role_counts, thresholds);
     let candidates = candidates::find_candidates(
         db,
         &commander.color_identity,
@@ -231,7 +231,7 @@ mod tests {
     #[test]
     fn errors_when_no_commander() {
         let (_dir, db) = fixture_db();
-        let err = run("Deck\n1 Sol Ring\n", &db).unwrap_err();
+        let err = run("Deck\n1 Sol Ring\n", &db, &metrics::Thresholds::default()).unwrap_err();
         assert!(err.to_string().contains("aucun Commandant"));
     }
 
@@ -239,7 +239,7 @@ mod tests {
     fn errors_when_two_commanders() {
         let (_dir, db) = fixture_db();
         let input = "Commander\n1 Atraxa, Praetors' Voice\n1 Sol Ring\n\nDeck\n";
-        let err = run(input, &db).unwrap_err();
+        let err = run(input, &db, &metrics::Thresholds::default()).unwrap_err();
         assert!(err.to_string().contains("exactement un Commandant"));
     }
 
@@ -247,7 +247,7 @@ mod tests {
     fn reports_unresolved_cards_without_failing() {
         let (_dir, db) = fixture_db();
         let input = deck_of(98, "1 Some Unknown Card\n");
-        let result = run(&input, &db).unwrap();
+        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
         assert_eq!(result.unresolved.len(), 1);
         assert_eq!(result.unresolved[0].name, "Some Unknown Card");
     }
@@ -256,7 +256,7 @@ mod tests {
     fn flags_wrong_deck_size() {
         let (_dir, db) = fixture_db();
         let input = deck_of(10, "");
-        let result = run(&input, &db).unwrap();
+        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
         assert!(
             result
                 .construction_errors
@@ -269,7 +269,7 @@ mod tests {
     fn allows_many_basic_lands_but_not_duplicate_nonland() {
         let (_dir, db) = fixture_db();
         let input = deck_of(97, "2 Sol Ring\n");
-        let result = run(&input, &db).unwrap();
+        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
         assert!(
             !result
                 .construction_errors
@@ -289,7 +289,7 @@ mod tests {
         let (_dir, db) = fixture_db();
         // Atraxa is WUBG; Shock is red-identity, out of Commander's colors.
         let input = deck_of(97, "1 Shock\n");
-        let result = run(&input, &db).unwrap();
+        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
         assert!(
             result
                 .construction_errors
@@ -302,7 +302,7 @@ mod tests {
     fn flags_illegal_card_as_weakness() {
         let (_dir, db) = fixture_db();
         let input = deck_of(97, "1 Black Lotus\n");
-        let result = run(&input, &db).unwrap();
+        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
         assert!(
             result
                 .weaknesses
@@ -315,7 +315,7 @@ mod tests {
     fn valid_100_card_deck_has_no_construction_errors() {
         let (_dir, db) = fixture_db();
         let input = deck_of(98, "1 Sol Ring\n");
-        let result = run(&input, &db).unwrap();
+        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
         assert_eq!(result.card_count, 100);
         assert!(
             result.construction_errors.is_empty(),
@@ -328,7 +328,7 @@ mod tests {
     fn mostly_lands_deck_reports_ramp_and_draw_weaknesses() {
         let (_dir, db) = fixture_db();
         let input = deck_of(98, "1 Sol Ring\n");
-        let result = run(&input, &db).unwrap();
+        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
         assert!(
             result
                 .weaknesses

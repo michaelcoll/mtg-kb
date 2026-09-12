@@ -14,12 +14,31 @@ use clap::Parser;
 fn main() {
     let cli = cli::Cli::parse();
     let result = match cli.command {
-        cli::Command::Analyze { source } => commands::analyze::run(&source),
+        cli::Command::Analyze {
+            source,
+            min_lands,
+            min_ramp,
+            min_draw,
+            min_removal,
+            min_wipe,
+            max_average_mana_value,
+            max_high_cost_cards,
+        } => commands::analyze::run(
+            &source,
+            min_lands,
+            min_ramp,
+            min_draw,
+            min_removal,
+            min_wipe,
+            max_average_mana_value,
+            max_high_cost_cards,
+        ),
         cli::Command::Report { json_path } => commands::report::run(&json_path),
         cli::Command::Card { name, format } => commands::card::run(&name, format),
         cli::Command::Search {
             name,
             type_contains,
+            subtype_contains,
             text,
             color_identity,
             legal_in,
@@ -29,6 +48,7 @@ fn main() {
         } => commands::search::run(
             name,
             type_contains,
+            subtype_contains,
             text,
             color_identity,
             legal_in,

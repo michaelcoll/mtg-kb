@@ -15,6 +15,29 @@ pub enum Command {
     Analyze {
         /// Chemin du fichier, ou "-" pour lire depuis l'entrée standard
         source: String,
+        /// Nombre minimal de terrains attendu
+        #[arg(long, default_value_t = 35)]
+        min_lands: u32,
+        /// Nombre minimal de Cartes de Rôle "ramp" attendu
+        #[arg(long, default_value_t = 10)]
+        min_ramp: u32,
+        /// Nombre minimal de Cartes de Rôle "pioche" attendu
+        #[arg(long, default_value_t = 8)]
+        min_draw: u32,
+        /// Nombre minimal de Cartes de Rôle "removal_cible" attendu
+        #[arg(long, default_value_t = 8)]
+        min_removal: u32,
+        /// Nombre minimal de Cartes de Rôle "wipe" attendu
+        #[arg(long, default_value_t = 2)]
+        min_wipe: u32,
+        /// Mana value moyenne (hors terrains) au-delà de laquelle la courbe
+        /// est jugée trop chère
+        #[arg(long, default_value_t = 3.5)]
+        max_average_mana_value: f64,
+        /// Nombre de Cartes à mana value ≥ 6 au-delà duquel la courbe est
+        /// jugée déséquilibrée vers le haut
+        #[arg(long, default_value_t = 8)]
+        max_high_cost_cards: u32,
     },
     /// Génère le Rapport d'analyse HTML à partir du JSON de `kb analyze`
     /// enrichi par Claude (verdict, Suggestions retenues)
@@ -33,9 +56,12 @@ pub enum Command {
         /// Nom (recherche partielle)
         #[arg(long)]
         name: Option<String>,
-        /// Sous-chaîne de la ligne de type (ex. "Creature", "Elf")
+        /// Sous-chaîne de la ligne de type (ex. "Creature", "Legendary")
         #[arg(long = "type")]
         type_contains: Option<String>,
+        /// Sous-chaîne des sous-types (ex. "Elf", "Equipment")
+        #[arg(long = "subtype")]
+        subtype_contains: Option<String>,
         /// Sous-chaîne du texte oracle
         #[arg(long)]
         text: Option<String>,

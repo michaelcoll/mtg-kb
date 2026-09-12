@@ -17,7 +17,8 @@ renvoient du JSON stable.
   face : nom complet `A // B`).
 - `kb search [filtres] [--limit N]` — recherche combinée :
   - `--name <partiel>` : sous-chaîne du nom
-  - `--type <partiel>` : sous-chaîne de la ligne de type (ex. `Creature`, `Elf`)
+  - `--type <partiel>` : sous-chaîne de la ligne de type (ex. `Creature`, `Legendary`)
+  - `--subtype <partiel>` : sous-chaîne des sous-types (ex. `Elf`, `Equipment`)
   - `--text <partiel>` : sous-chaîne du texte oracle
   - `--color-identity <WUBRG>` : Identité de couleur de la Carte incluse dans
     cet ensemble (ex. `--color-identity GW` pour un Commandant Selesnya)

@@ -9,6 +9,7 @@ use crate::output::{Format, print_json};
 pub fn run(
     name: Option<String>,
     type_contains: Option<String>,
+    subtype_contains: Option<String>,
     text: Option<String>,
     color_identity: Option<String>,
     legal_in: Option<String>,
@@ -20,6 +21,7 @@ pub fn run(
     let filters = SearchFilters {
         name,
         type_contains,
+        subtype_contains,
         oracle_text_contains: text,
         color_identity_subset_of: color_identity
             .map(|s| s.chars().map(|c| c.to_string()).collect()),

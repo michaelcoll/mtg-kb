@@ -37,6 +37,7 @@ const LEGALITY_FORMATS: &[&str] = &[
 pub struct SearchFilters {
     pub name: Option<String>,
     pub type_contains: Option<String>,
+    pub subtype_contains: Option<String>,
     pub oracle_text_contains: Option<String>,
     pub color_identity_subset_of: Option<Vec<String>>,
     pub legal_in_format: Option<String>,
@@ -130,6 +131,10 @@ impl CardsDb {
         if let Some(type_contains) = &filters.type_contains {
             conditions.push("c.type LIKE ?".to_string());
             params.push(Box::new(format!("%{type_contains}%")));
+        }
+        if let Some(subtype_contains) = &filters.subtype_contains {
+            conditions.push("c.subtypes LIKE ?".to_string());
+            params.push(Box::new(format!("%{subtype_contains}%")));
         }
         if let Some(text) = &filters.oracle_text_contains {
             conditions.push("c.text LIKE ?".to_string());
@@ -388,6 +393,21 @@ mod tests {
         let results = db
             .search(&SearchFilters {
                 name: Some("elve".to_string()),
+                limit: 10,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "Llanowar Elves");
+    }
+
+    #[test]
+    fn search_filters_by_subtype() {
+        let (_dir, path) = fixture_db();
+        let db = CardsDb::open(&path).unwrap();
+        let results = db
+            .search(&SearchFilters {
+                subtype_contains: Some("Elf".to_string()),
                 limit: 10,
                 ..Default::default()
             })

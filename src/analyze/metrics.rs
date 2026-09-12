@@ -115,6 +115,11 @@ pub fn count_color_symbols(mana_cost: &str, counts: &mut BTreeMap<String, u32>) 
 fn land_color_sources(card: &Card, quantity: u32, counts: &mut BTreeMap<String, u32>) {
     static ADD_SYMBOL: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"[Aa]dd \{([^}]+)\}").unwrap());
+    // Motif "Add one mana of any color" (Command Tower, Exotic Orchard,
+    // filter lands…) : ne cite pas de symbole précis mais produit les 5
+    // couleurs.
+    static ADD_ANY_COLOR: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)add (one|a) mana of any color").unwrap());
     let text = card.oracle_text.as_deref().unwrap_or("");
     // Une même Carte peut mentionner plusieurs fois "Add {X}" (une par
     // symbole alternatif) : on ne compte chaque couleur qu'une fois par
@@ -127,6 +132,9 @@ fn land_color_sources(card: &Card, quantity: u32, counts: &mut BTreeMap<String, 
                 colors_seen.insert(color);
             }
         }
+    }
+    if ADD_ANY_COLOR.is_match(text) {
+        colors_seen.extend(COLORS);
     }
     for color in colors_seen {
         *counts.entry(color.to_string()).or_insert(0) += quantity;
@@ -167,6 +175,12 @@ pub struct Thresholds {
     pub min_draw: u32,
     pub min_removal: u32,
     pub min_wipe: u32,
+    /// Mana value moyenne (hors terrains) au-delà de laquelle la courbe est
+    /// jugée trop chère.
+    pub max_average_mana_value: f64,
+    /// Nombre de Cartes à mana value ≥ 6 (hors terrains) au-delà duquel la
+    /// courbe est jugée déséquilibrée vers le haut.
+    pub max_high_cost_cards: u32,
 }
 
 impl Default for Thresholds {
@@ -177,8 +191,39 @@ impl Default for Thresholds {
             min_draw: 8,
             min_removal: 8,
             min_wipe: 2,
+            max_average_mana_value: 3.5,
+            max_high_cost_cards: 8,
         }
     }
+}
+
+const HIGH_COST_MANA_VALUE: u32 = 6;
+
+/// Points faibles liés à une courbe de mana déséquilibrée : mana value
+/// moyenne trop haute, ou trop de Cartes très chères, par comparaison à des
+/// seuils configurables.
+pub fn curve_weaknesses(curve: &ManaCurve, thresholds: &Thresholds) -> Vec<String> {
+    let mut weaknesses = Vec::new();
+
+    if curve.average_mana_value > thresholds.max_average_mana_value {
+        weaknesses.push(format!(
+            "courbe de mana déséquilibrée : mana value moyenne de {} (> {})",
+            curve.average_mana_value, thresholds.max_average_mana_value
+        ));
+    }
+    let high_cost_count: u32 = curve
+        .buckets
+        .iter()
+        .filter(|b| b.mana_value >= HIGH_COST_MANA_VALUE)
+        .map(|b| b.count)
+        .sum();
+    if high_cost_count > thresholds.max_high_cost_cards {
+        weaknesses.push(format!(
+            "courbe de mana déséquilibrée : {high_cost_count} cartes à {HIGH_COST_MANA_VALUE}+ de mana value (> {})",
+            thresholds.max_high_cost_cards
+        ));
+    }
+    weaknesses
 }
 
 const RAMP: &str = "ramp";
@@ -347,6 +392,54 @@ mod tests {
                 .iter()
                 .any(|w| w.contains("Ramp sous-représenté"))
         );
+    }
+
+    #[test]
+    fn detects_any_color_land_sources() {
+        let mut counts = BTreeMap::new();
+        let command_tower = card(
+            "Command Tower",
+            "{T}: Add one mana of any color in your commander's color identity.",
+            &["Land"],
+            None,
+        );
+        land_color_sources(&command_tower, 1, &mut counts);
+        for color in COLORS {
+            assert_eq!(counts.get(color), Some(&1), "missing color {color}");
+        }
+    }
+
+    #[test]
+    fn curve_weaknesses_flags_high_average_mana_value() {
+        let curve = ManaCurve {
+            buckets: vec![ManaCurveBucket {
+                mana_value: 6,
+                count: 10,
+            }],
+            average_mana_value: 6.0,
+        };
+        let weaknesses = curve_weaknesses(&curve, &Thresholds::default());
+        assert!(weaknesses.iter().any(|w| w.contains("mana value moyenne")));
+        assert!(weaknesses.iter().any(|w| w.contains("cartes à 6+")));
+    }
+
+    #[test]
+    fn curve_weaknesses_empty_for_balanced_curve() {
+        let curve = ManaCurve {
+            buckets: vec![
+                ManaCurveBucket {
+                    mana_value: 2,
+                    count: 20,
+                },
+                ManaCurveBucket {
+                    mana_value: 3,
+                    count: 15,
+                },
+            ],
+            average_mana_value: 2.5,
+        };
+        let weaknesses = curve_weaknesses(&curve, &Thresholds::default());
+        assert!(weaknesses.is_empty(), "{weaknesses:?}");
     }
 
     #[test]
