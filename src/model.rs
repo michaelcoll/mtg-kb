@@ -18,6 +18,23 @@ pub struct Card {
     pub loyalty: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct SetInfo {
+    pub code: String,
+    pub name: String,
+    pub release_date: Option<String>,
+    pub set_type: Option<String>,
+    pub block: Option<String>,
+    pub base_set_size: Option<i64>,
+    pub total_set_size: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Ruling {
+    pub date: String,
+    pub text: String,
+}
+
 pub fn split_csv_field(raw: Option<&str>) -> Vec<String> {
     match raw {
         Some(s) if !s.is_empty() => s.split(", ").map(|p| p.trim().to_string()).collect(),
