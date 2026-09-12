@@ -1,5 +1,6 @@
 pub mod analyze;
 pub mod card;
+pub mod report;
 pub mod rules;
 pub mod rulings;
 pub mod search;

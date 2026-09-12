@@ -6,6 +6,7 @@ mod db;
 mod decklist;
 mod model;
 mod output;
+mod report;
 mod rules;
 
 use clap::Parser;
@@ -14,6 +15,7 @@ fn main() {
     let cli = cli::Cli::parse();
     let result = match cli.command {
         cli::Command::Analyze { source } => commands::analyze::run(&source),
+        cli::Command::Report { json_path } => commands::report::run(&json_path),
         cli::Command::Card { name, format } => commands::card::run(&name, format),
         cli::Command::Search {
             name,

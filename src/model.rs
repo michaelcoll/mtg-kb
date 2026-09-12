@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Card {
     pub name: String,
     pub mana_cost: Option<String>,
@@ -20,7 +20,7 @@ pub struct Card {
     pub loyalty: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SetInfo {
     pub code: String,
     pub name: String,
@@ -31,13 +31,13 @@ pub struct SetInfo {
     pub total_set_size: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Ruling {
     pub date: String,
     pub text: String,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RuleWithChildren {
     pub number: String,
     pub title: Option<String>,
@@ -45,25 +45,25 @@ pub struct RuleWithChildren {
     pub children: Vec<RuleEntryOut>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RuleEntryOut {
     pub number: String,
     pub text: String,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GlossaryDefinition {
     pub term: String,
     pub definition: String,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UnresolvedLine {
     pub quantity: u32,
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ResolvedCard {
     pub quantity: u32,
     pub roles: Vec<String>,
@@ -71,13 +71,13 @@ pub struct ResolvedCard {
     pub card: Card,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Synergy {
     pub theme: String,
     pub cards: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Candidate {
     pub card: Card,
     pub score: u32,
@@ -85,26 +85,26 @@ pub struct Candidate {
     pub matched_weak_roles: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ManaCurveBucket {
     pub mana_value: u32,
     pub count: u32,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ManaCurve {
     pub buckets: Vec<ManaCurveBucket>,
     pub average_mana_value: f64,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ManaBase {
     pub land_count: u32,
     pub sources_by_color: BTreeMap<String, u32>,
     pub symbols_by_color: BTreeMap<String, u32>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AnalyzeResult {
     pub commander: Card,
     pub cards: Vec<ResolvedCard>,
@@ -125,6 +125,23 @@ pub struct AnalyzeResult {
     /// Deck, classées par Thèmes du Deck et Rôles en Point faible — base des
     /// Suggestions choisies par Claude.
     pub candidates: Vec<Candidate>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Suggestion {
+    pub card_name: String,
+    pub justification: String,
+}
+
+/// Le JSON de `kb analyze` enrichi par Claude : verdict et Suggestions
+/// retenues parmi les candidats. `kb report` prend ce JSON en entrée.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EnrichedAnalysis {
+    #[serde(flatten)]
+    pub analysis: AnalyzeResult,
+    pub verdict: String,
+    #[serde(default)]
+    pub suggestions: Vec<Suggestion>,
 }
 
 pub fn split_csv_field(raw: Option<&str>) -> Vec<String> {

@@ -16,6 +16,12 @@ pub enum Command {
         /// Chemin du fichier, ou "-" pour lire depuis l'entrée standard
         source: String,
     },
+    /// Génère le Rapport d'analyse HTML à partir du JSON de `kb analyze`
+    /// enrichi par Claude (verdict, Suggestions retenues)
+    Report {
+        /// Chemin du fichier JSON enrichi
+        json_path: String,
+    },
     /// Affiche une Carte par son nom oracle exact
     Card {
         name: String,
