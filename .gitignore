@@ -1,2 +1,6 @@
 .idea
-AllPrintings.sqlite
+
+/data
+/decks
+/reports
+/target

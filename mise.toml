@@ -1,0 +1,39 @@
+[tools]
+rust = "1.98.1"
+"cargo:cargo-nextest" = "latest"
+
+[tasks.checks]
+description = "Runs all the checks for the project"
+depends = ["test", "lint", "fmt-check"]
+
+[tasks.build]
+description = "Builds the project"
+run = "cargo build"
+alias = ["b"]
+
+[tasks.test]
+description = "Runs the test suite"
+run = "cargo nextest run"
+alias = ["t"]
+
+[tasks.lint]
+description = "Lints the project"
+run = "cargo clippy --all-targets -- -D warnings"
+
+[tasks.format]
+description = "Formats the codebase"
+run = "cargo fmt"
+alias = ["f"]
+
+[tasks.fmt-check]
+description = "Checks formatting without modifying files (used in CI)"
+run = "cargo fmt --check"
+hide = true
+
+[tasks.clean]
+description = "Cleans the project artifacts"
+run = "cargo clean"
+
+[tasks.upgrade]
+description = "Upgrades the project dependencies"
+run = "cargo update"
