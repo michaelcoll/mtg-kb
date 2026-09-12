@@ -67,7 +67,22 @@ pub struct UnresolvedLine {
 pub struct ResolvedCard {
     pub quantity: u32,
     pub roles: Vec<String>,
+    pub themes: Vec<String>,
     pub card: Card,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Synergy {
+    pub theme: String,
+    pub cards: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Candidate {
+    pub card: Card,
+    pub score: u32,
+    pub matched_themes: Vec<String>,
+    pub matched_weak_roles: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -105,6 +120,11 @@ pub struct AnalyzeResult {
     /// Points faibles au sens du glossaire : Rôle sous-représenté, courbe de
     /// mana déséquilibrée, base de mana insuffisante, Carte illégale.
     pub weaknesses: Vec<String>,
+    pub synergies: Vec<Synergy>,
+    /// Cartes légales Commander, dans l'Identité de couleur, absentes du
+    /// Deck, classées par Thèmes du Deck et Rôles en Point faible — base des
+    /// Suggestions choisies par Claude.
+    pub candidates: Vec<Candidate>,
 }
 
 pub fn split_csv_field(raw: Option<&str>) -> Vec<String> {

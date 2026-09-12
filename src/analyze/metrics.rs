@@ -181,6 +181,34 @@ impl Default for Thresholds {
     }
 }
 
+const RAMP: &str = "ramp";
+const PIOCHE: &str = "pioche";
+const REMOVAL_CIBLE: &str = "removal_cible";
+const WIPE: &str = "wipe";
+
+fn role_thresholds(thresholds: &Thresholds) -> [(&'static str, &'static str, u32); 4] {
+    [
+        (RAMP, "Ramp", thresholds.min_ramp),
+        (PIOCHE, "Pioche", thresholds.min_draw),
+        (REMOVAL_CIBLE, "Removal ciblé", thresholds.min_removal),
+        (WIPE, "Wipe", thresholds.min_wipe),
+    ]
+}
+
+/// Noms des Rôles sous-représentés par rapport aux seuils configurables
+/// (hors base de mana, qui n'est pas un Rôle) : utilisé pour classer les
+/// candidats aux Suggestions par Rôle en Point faible.
+pub fn weak_role_names(
+    role_counts: &BTreeMap<String, u32>,
+    thresholds: &Thresholds,
+) -> Vec<String> {
+    role_thresholds(thresholds)
+        .into_iter()
+        .filter(|(role, _, min)| *role_counts.get(*role).unwrap_or(&0) < *min)
+        .map(|(role, _, _)| role.to_string())
+        .collect()
+}
+
 /// Points faibles liés aux Rôles sous-représentés et à une base de mana
 /// insuffisante, par comparaison à des seuils configurables.
 pub fn role_weaknesses(
@@ -189,7 +217,6 @@ pub fn role_weaknesses(
     thresholds: &Thresholds,
 ) -> Vec<String> {
     let mut weaknesses = Vec::new();
-    let count_of = |role: &str| *role_counts.get(role).unwrap_or(&0);
 
     if land_count < thresholds.min_lands {
         weaknesses.push(format!(
@@ -197,13 +224,8 @@ pub fn role_weaknesses(
             thresholds.min_lands
         ));
     }
-    for (role, label, min) in [
-        ("ramp", "Ramp", thresholds.min_ramp),
-        ("pioche", "Pioche", thresholds.min_draw),
-        ("removal_cible", "Removal ciblé", thresholds.min_removal),
-        ("wipe", "Wipe", thresholds.min_wipe),
-    ] {
-        let count = count_of(role);
+    for (role, label, min) in role_thresholds(thresholds) {
+        let count = *role_counts.get(role).unwrap_or(&0);
         if count < min {
             weaknesses.push(format!(
                 "{label} sous-représenté : {count} cartes (< {min})"
@@ -291,6 +313,7 @@ mod tests {
         let forest = ResolvedCard {
             quantity: 36,
             roles: vec![],
+            themes: vec![],
             card: card("Forest", "{T}: Add {G}.", &["Basic", "Land"], None),
         };
         let commander = card(

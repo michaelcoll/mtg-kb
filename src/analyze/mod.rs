@@ -1,12 +1,14 @@
+pub mod candidates;
 pub mod metrics;
+pub mod themes;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use anyhow::{Result, bail};
 
 use crate::db::cards::CardsDb;
 use crate::decklist::parser::{self, DecklistLine};
-use crate::model::{AnalyzeResult, ResolvedCard, UnresolvedLine};
+use crate::model::{AnalyzeResult, ResolvedCard, Synergy, UnresolvedLine};
 
 const REQUIRED_DECK_SIZE: u32 = 100;
 
@@ -46,6 +48,7 @@ pub fn run(input: &str, db: &CardsDb) -> Result<AnalyzeResult> {
             Some(card) => cards.push(ResolvedCard {
                 quantity: line.quantity,
                 roles: metrics::detect_roles(&card),
+                themes: themes::detect_themes(&card),
                 card,
             }),
             None => unresolved.push(UnresolvedLine {
@@ -94,11 +97,29 @@ pub fn run(input: &str, db: &CardsDb) -> Result<AnalyzeResult> {
             *role_counts.entry(role.clone()).or_insert(0) += resolved.quantity;
         }
     }
+    let thresholds = metrics::Thresholds::default();
     weaknesses.extend(metrics::role_weaknesses(
         &role_counts,
         mana_base.land_count,
-        &metrics::Thresholds::default(),
+        &thresholds,
     ));
+
+    let synergies = find_synergies(&cards);
+
+    let deck_names: HashSet<String> = cards.iter().map(|c| c.card.name.clone()).collect();
+    let mut deck_themes: HashSet<String> = cards
+        .iter()
+        .flat_map(|c| c.themes.iter().cloned())
+        .collect();
+    deck_themes.extend(themes::detect_themes(&commander));
+    let weak_roles = metrics::weak_role_names(&role_counts, &thresholds);
+    let candidates = candidates::find_candidates(
+        db,
+        &commander.color_identity,
+        &deck_names,
+        &deck_themes,
+        &weak_roles,
+    )?;
 
     Ok(AnalyzeResult {
         commander,
@@ -110,7 +131,28 @@ pub fn run(input: &str, db: &CardsDb) -> Result<AnalyzeResult> {
         mana_base,
         role_counts,
         weaknesses,
+        synergies,
+        candidates,
     })
+}
+
+/// Thèmes partagés par au moins deux Cartes du Deck, avec les Cartes
+/// concernées.
+fn find_synergies(cards: &[ResolvedCard]) -> Vec<Synergy> {
+    let mut cards_by_theme: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for resolved in cards {
+        for theme in &resolved.themes {
+            cards_by_theme
+                .entry(theme.clone())
+                .or_default()
+                .push(resolved.card.name.clone());
+        }
+    }
+    cards_by_theme
+        .into_iter()
+        .filter(|(_, cards)| cards.len() >= 2)
+        .map(|(theme, cards)| Synergy { theme, cards })
+        .collect()
 }
 
 fn aggregate(lines: Vec<DecklistLine>) -> Vec<DecklistLine> {
