@@ -42,7 +42,11 @@ fn main() {
             cli::RulesAction::Define { term, format } => commands::rules::define(&term, format),
             cli::RulesAction::Number(args) => commands::rules::dispatch_number(&args),
         },
-        cli::Command::UpdateRules { url } => commands::update_rules::run(url),
+        cli::Command::Update { target } => match target {
+            None => commands::update::run_all(),
+            Some(cli::UpdateTarget::Cards) => commands::update::run_cards(),
+            Some(cli::UpdateTarget::Rules { url }) => commands::update_rules::run(url),
+        },
     };
     if let Err(err) = result {
         eprintln!("erreur: {err:#}");

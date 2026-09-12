@@ -107,9 +107,11 @@ impl RulesDb {
 
         let rule_text: Option<String> = self
             .conn
-            .query_row("SELECT text FROM rules WHERE number = ?1", [number], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT text FROM rules WHERE number = ?1",
+                [number],
+                |row| row.get(0),
+            )
             .ok();
 
         if section_title.is_none() && rule_text.is_none() {
@@ -134,9 +136,9 @@ impl RulesDb {
             // pas les sous-numéros frères déjà exclus par le LIKE ci-dessus
             // (qui ne matchait que le préfixe "<numéro>."). On ajoute donc
             // en plus la variante à une lettre.
-            let mut letter_stmt = self.conn.prepare(
-                "SELECT number, text FROM rules WHERE number GLOB ?1 ORDER BY number",
-            )?;
+            let mut letter_stmt = self
+                .conn
+                .prepare("SELECT number, text FROM rules WHERE number GLOB ?1 ORDER BY number")?;
             let glob = format!("{number}[a-z]");
             let letter_children: Vec<RuleEntryOut> = letter_stmt
                 .query_map([&glob], |row| {

@@ -59,8 +59,19 @@ pub enum Command {
         #[command(subcommand)]
         action: RulesAction,
     },
-    /// Met à jour la Base règles depuis le document officiel Wizards
-    UpdateRules {
+    /// Met à jour les bases locales (cartes et/ou règles)
+    Update {
+        #[command(subcommand)]
+        target: Option<UpdateTarget>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum UpdateTarget {
+    /// Ne met à jour que la Base cartes (MTGJSON AllPrintings.sqlite)
+    Cards,
+    /// Ne met à jour que la Base règles (Comprehensive Rules)
+    Rules {
         /// URL directe du fichier .txt (sinon, découverte automatique)
         #[arg(long)]
         url: Option<String>,

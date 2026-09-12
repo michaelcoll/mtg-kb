@@ -24,7 +24,10 @@ fn print_table(set: &SetInfo) {
         "release_date     {}",
         set.release_date.clone().unwrap_or_default()
     );
-    println!("type             {}", set.set_type.clone().unwrap_or_default());
+    println!(
+        "type             {}",
+        set.set_type.clone().unwrap_or_default()
+    );
     println!("block            {}", set.block.clone().unwrap_or_default());
     println!(
         "base_set_size    {}",

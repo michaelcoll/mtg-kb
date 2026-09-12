@@ -26,8 +26,7 @@ static RULE_LINE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(\d{3}\.\d+[a-z]?)\.?\s+(.+)$").unwrap());
 
 /// En-tête de section : trois chiffres, point, espace, titre (ex. "100. General").
-static SECTION_LINE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(\d{3})\.\s+(.+)$").unwrap());
+static SECTION_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d{3})\.\s+(.+)$").unwrap());
 
 pub fn parse_effective_date(text: &str) -> Option<String> {
     let re = Regex::new(r"effective as of (.+?)\.").unwrap();
@@ -121,7 +120,10 @@ pub fn split_document(full_text: &str) -> (&str, &str) {
         .filter(|&pos| pos >= glossary_start)
         .unwrap_or(full_text.len());
 
-    (&full_text[..body_end], &full_text[glossary_start..credits_start])
+    (
+        &full_text[..body_end],
+        &full_text[glossary_start..credits_start],
+    )
 }
 
 #[cfg(test)]

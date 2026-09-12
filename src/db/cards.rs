@@ -213,9 +213,9 @@ impl CardsDb {
         let uuid: String = row.get(0)?;
         drop(uuid_rows);
 
-        let mut stmt = self.conn.prepare(
-            "SELECT date, text FROM cardRulings WHERE uuid = ?1 ORDER BY date, rowid",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT date, text FROM cardRulings WHERE uuid = ?1 ORDER BY date, rowid")?;
         let rulings = stmt
             .query_map([uuid], |row| {
                 Ok(Ruling {
