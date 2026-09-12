@@ -226,6 +226,33 @@ impl CardsDb {
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(Some(rulings))
     }
+
+    /// Légalité en Commander d'une Carte par nom oracle exact. `None` si la
+    /// Carte n'existe pas dans la Base cartes.
+    pub fn is_legal_commander(&self, name: &str) -> Result<Option<bool>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT cl.commander FROM cards c \
+             JOIN cardLegalities cl ON cl.uuid = c.uuid \
+             WHERE c.name = ?1 LIMIT 1",
+        )?;
+        let mut rows = stmt.query([name])?;
+        match rows.next()? {
+            Some(row) => {
+                let legality: Option<String> = row.get(0)?;
+                Ok(Some(legality.as_deref() == Some("Legal")))
+            }
+            None => {
+                // La Carte peut exister sans ligne cardLegalities associée
+                // (rare, mais possible pour des impressions promo). On
+                // distingue "carte inconnue" de "légalité absente".
+                if self.card_by_name(name)?.is_some() {
+                    Ok(Some(false))
+                } else {
+                    Ok(None)
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -313,6 +340,23 @@ mod tests {
         let (_dir, path) = fixture_db();
         let db = CardsDb::open(&path).unwrap();
         assert!(db.card_by_name("Not A Real Card").unwrap().is_none());
+    }
+
+    #[test]
+    fn is_legal_commander_true_for_legal_card() {
+        let (_dir, path) = fixture_db();
+        let db = CardsDb::open(&path).unwrap();
+        assert_eq!(
+            db.is_legal_commander("Atraxa, Praetors' Voice").unwrap(),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn is_legal_commander_none_for_unknown_card() {
+        let (_dir, path) = fixture_db();
+        let db = CardsDb::open(&path).unwrap();
+        assert_eq!(db.is_legal_commander("Nope").unwrap(), None);
     }
 
     #[test]

@@ -1,3 +1,4 @@
+pub mod analyze;
 pub mod card;
 pub mod rules;
 pub mod rulings;

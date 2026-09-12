@@ -55,6 +55,27 @@ pub struct GlossaryDefinition {
     pub definition: String,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct UnresolvedLine {
+    pub quantity: u32,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ResolvedCard {
+    pub quantity: u32,
+    pub card: Card,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct AnalyzeResult {
+    pub commander: Card,
+    pub cards: Vec<ResolvedCard>,
+    pub unresolved: Vec<UnresolvedLine>,
+    pub card_count: u32,
+    pub problems: Vec<String>,
+}
+
 pub fn split_csv_field(raw: Option<&str>) -> Vec<String> {
     match raw {
         Some(s) if !s.is_empty() => s.split(", ").map(|p| p.trim().to_string()).collect(),

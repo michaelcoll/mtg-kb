@@ -11,6 +11,11 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Analyse une Decklist Commander (fichier, ou "-" pour stdin)
+    Analyze {
+        /// Chemin du fichier, ou "-" pour lire depuis l'entrée standard
+        source: String,
+    },
     /// Affiche une Carte par son nom oracle exact
     Card {
         name: String,

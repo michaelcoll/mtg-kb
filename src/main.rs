@@ -1,7 +1,9 @@
+mod analyze;
 mod cli;
 mod commands;
 mod data_dir;
 mod db;
+mod decklist;
 mod model;
 mod output;
 mod rules;
@@ -11,6 +13,7 @@ use clap::Parser;
 fn main() {
     let cli = cli::Cli::parse();
     let result = match cli.command {
+        cli::Command::Analyze { source } => commands::analyze::run(&source),
         cli::Command::Card { name, format } => commands::card::run(&name, format),
         cli::Command::Search {
             name,
