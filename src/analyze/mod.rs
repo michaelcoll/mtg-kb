@@ -1,3 +1,7 @@
+pub mod metrics;
+
+use std::collections::BTreeMap;
+
 use anyhow::{Result, bail};
 
 use crate::db::cards::CardsDb;
@@ -34,12 +38,14 @@ pub fn run(input: &str, db: &CardsDb) -> Result<AnalyzeResult> {
 
     let mut cards = Vec::new();
     let mut unresolved = Vec::new();
-    let mut problems = Vec::new();
+    let mut construction_errors = Vec::new();
+    let mut weaknesses = Vec::new();
 
     for line in aggregate(decklist.deck) {
         match db.card_by_name(&line.name)? {
             Some(card) => cards.push(ResolvedCard {
                 quantity: line.quantity,
+                roles: metrics::detect_roles(&card),
                 card,
             }),
             None => unresolved.push(UnresolvedLine {
@@ -53,26 +59,26 @@ pub fn run(input: &str, db: &CardsDb) -> Result<AnalyzeResult> {
         + cards.iter().map(|c| c.quantity).sum::<u32>()
         + unresolved.iter().map(|u| u.quantity).sum::<u32>();
     if card_count != REQUIRED_DECK_SIZE {
-        problems.push(format!(
+        construction_errors.push(format!(
             "le Deck contient {card_count} cartes, {REQUIRED_DECK_SIZE} attendues"
         ));
     }
 
     for resolved in &cards {
         if resolved.quantity > 1 && !is_basic_land(&resolved.card) {
-            problems.push(format!(
+            construction_errors.push(format!(
                 "« {} » apparaît {} fois : le Deck doit être singleton hors terrains de base",
                 resolved.card.name, resolved.quantity
             ));
         }
         if !is_color_identity_subset(&resolved.card.color_identity, &commander.color_identity) {
-            problems.push(format!(
+            construction_errors.push(format!(
                 "« {} » (Identité de couleur {:?}) dépasse l'Identité de couleur du Commandant {:?}",
                 resolved.card.name, resolved.card.color_identity, commander.color_identity
             ));
         }
         match db.is_legal_commander(&resolved.card.name)? {
-            Some(false) | None => problems.push(format!(
+            Some(false) | None => weaknesses.push(format!(
                 "« {} » n'est pas légale en Commander",
                 resolved.card.name
             )),
@@ -80,12 +86,30 @@ pub fn run(input: &str, db: &CardsDb) -> Result<AnalyzeResult> {
         }
     }
 
+    let mana_curve = metrics::mana_curve(&cards);
+    let mana_base = metrics::mana_base(&cards, &commander);
+    let mut role_counts: BTreeMap<String, u32> = BTreeMap::new();
+    for resolved in &cards {
+        for role in &resolved.roles {
+            *role_counts.entry(role.clone()).or_insert(0) += resolved.quantity;
+        }
+    }
+    weaknesses.extend(metrics::role_weaknesses(
+        &role_counts,
+        mana_base.land_count,
+        &metrics::Thresholds::default(),
+    ));
+
     Ok(AnalyzeResult {
         commander,
         cards,
         unresolved,
         card_count,
-        problems,
+        construction_errors,
+        mana_curve,
+        mana_base,
+        role_counts,
+        weaknesses,
     })
 }
 
@@ -136,7 +160,7 @@ mod tests {
                 'Legendary Creature — Phyrexian Angel Horror', 'Creature', 'Phyrexian, Angel, Horror',
                 'Legendary', 'text', 'B, G, U, W', 'W, U, B, G', NULL, '4', '4', NULL);
             INSERT INTO cards VALUES ('solring', 'Sol Ring', '{1}', 1.0, 'Artifact', 'Artifact',
-                NULL, NULL, 'text', NULL, NULL, NULL, NULL, NULL, NULL);
+                NULL, NULL, '{T}: Add {C}{C}.', NULL, NULL, NULL, NULL, NULL, NULL);
             INSERT INTO cards VALUES ('forest', 'Forest', NULL, 0.0, 'Basic Land — Forest', 'Land',
                 'Forest', 'Basic', 'text', NULL, NULL, NULL, NULL, NULL, NULL);
             INSERT INTO cards VALUES ('lotus', 'Black Lotus', '{0}', 0.0, 'Artifact', 'Artifact',
@@ -191,7 +215,12 @@ mod tests {
         let (_dir, db) = fixture_db();
         let input = deck_of(10, "");
         let result = run(&input, &db).unwrap();
-        assert!(result.problems.iter().any(|p| p.contains("100 attendues")));
+        assert!(
+            result
+                .construction_errors
+                .iter()
+                .any(|p| p.contains("100 attendues"))
+        );
     }
 
     #[test]
@@ -199,8 +228,18 @@ mod tests {
         let (_dir, db) = fixture_db();
         let input = deck_of(97, "2 Sol Ring\n");
         let result = run(&input, &db).unwrap();
-        assert!(!result.problems.iter().any(|p| p.contains("Forest")));
-        assert!(result.problems.iter().any(|p| p.contains("Sol Ring")));
+        assert!(
+            !result
+                .construction_errors
+                .iter()
+                .any(|p| p.contains("Forest"))
+        );
+        assert!(
+            result
+                .construction_errors
+                .iter()
+                .any(|p| p.contains("Sol Ring"))
+        );
     }
 
     #[test]
@@ -211,31 +250,57 @@ mod tests {
         let result = run(&input, &db).unwrap();
         assert!(
             result
-                .problems
+                .construction_errors
                 .iter()
                 .any(|p| p.contains("Shock") && p.contains("Identité de couleur"))
         );
     }
 
     #[test]
-    fn flags_illegal_card() {
+    fn flags_illegal_card_as_weakness() {
         let (_dir, db) = fixture_db();
         let input = deck_of(97, "1 Black Lotus\n");
         let result = run(&input, &db).unwrap();
         assert!(
             result
-                .problems
+                .weaknesses
                 .iter()
                 .any(|p| p.contains("Black Lotus") && p.contains("légale"))
         );
     }
 
     #[test]
-    fn valid_100_card_deck_has_no_problems() {
+    fn valid_100_card_deck_has_no_construction_errors() {
         let (_dir, db) = fixture_db();
         let input = deck_of(98, "1 Sol Ring\n");
         let result = run(&input, &db).unwrap();
         assert_eq!(result.card_count, 100);
-        assert!(result.problems.is_empty(), "{:?}", result.problems);
+        assert!(
+            result.construction_errors.is_empty(),
+            "{:?}",
+            result.construction_errors
+        );
+    }
+
+    #[test]
+    fn mostly_lands_deck_reports_ramp_and_draw_weaknesses() {
+        let (_dir, db) = fixture_db();
+        let input = deck_of(98, "1 Sol Ring\n");
+        let result = run(&input, &db).unwrap();
+        assert!(
+            result
+                .weaknesses
+                .iter()
+                .any(|w| w.contains("Ramp sous-représenté"))
+        );
+        assert!(
+            result
+                .weaknesses
+                .iter()
+                .any(|w| w.contains("Pioche sous-représenté"))
+        );
+        assert_eq!(result.mana_base.land_count, 98);
+        assert_eq!(result.role_counts.get("terrain"), Some(&98));
+        assert_eq!(result.role_counts.get("ramp"), Some(&1));
     }
 }

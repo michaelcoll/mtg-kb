@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -64,7 +66,27 @@ pub struct UnresolvedLine {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ResolvedCard {
     pub quantity: u32,
+    pub roles: Vec<String>,
     pub card: Card,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ManaCurveBucket {
+    pub mana_value: u32,
+    pub count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ManaCurve {
+    pub buckets: Vec<ManaCurveBucket>,
+    pub average_mana_value: f64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ManaBase {
+    pub land_count: u32,
+    pub sources_by_color: BTreeMap<String, u32>,
+    pub symbols_by_color: BTreeMap<String, u32>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -73,7 +95,16 @@ pub struct AnalyzeResult {
     pub cards: Vec<ResolvedCard>,
     pub unresolved: Vec<UnresolvedLine>,
     pub card_count: u32,
-    pub problems: Vec<String>,
+    /// Écarts de construction du Deck (taille, singleton, Identité de
+    /// couleur) : des erreurs de deckbuilding, pas des Points faibles
+    /// stratégiques.
+    pub construction_errors: Vec<String>,
+    pub mana_curve: ManaCurve,
+    pub mana_base: ManaBase,
+    pub role_counts: BTreeMap<String, u32>,
+    /// Points faibles au sens du glossaire : Rôle sous-représenté, courbe de
+    /// mana déséquilibrée, base de mana insuffisante, Carte illégale.
+    pub weaknesses: Vec<String>,
 }
 
 pub fn split_csv_field(raw: Option<&str>) -> Vec<String> {
