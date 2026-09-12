@@ -4,6 +4,7 @@ mod data_dir;
 mod db;
 mod model;
 mod output;
+mod rules;
 
 use clap::Parser;
 
@@ -32,6 +33,16 @@ fn main() {
         ),
         cli::Command::Set { code, format } => commands::set::run(&code, format),
         cli::Command::Rulings { name, format } => commands::rulings::run(&name, format),
+        cli::Command::Rules { action } => match action {
+            cli::RulesAction::Search {
+                text,
+                limit,
+                format,
+            } => commands::rules::search(&text, limit, format),
+            cli::RulesAction::Define { term, format } => commands::rules::define(&term, format),
+            cli::RulesAction::Number(args) => commands::rules::dispatch_number(&args),
+        },
+        cli::Command::UpdateRules { url } => commands::update_rules::run(url),
     };
     if let Err(err) = result {
         eprintln!("erreur: {err:#}");

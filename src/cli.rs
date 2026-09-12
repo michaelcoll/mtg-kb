@@ -54,4 +54,38 @@ pub enum Command {
         #[arg(long, value_enum, default_value_t = Format::Json)]
         format: Format,
     },
+    /// Interroge la Base règles (Comprehensive Rules)
+    Rules {
+        #[command(subcommand)]
+        action: RulesAction,
+    },
+    /// Met à jour la Base règles depuis le document officiel Wizards
+    UpdateRules {
+        /// URL directe du fichier .txt (sinon, découverte automatique)
+        #[arg(long)]
+        url: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum RulesAction {
+    /// Recherche plein texte dans les Règles
+    Search {
+        text: String,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        #[arg(long, value_enum, default_value_t = Format::Json)]
+        format: Format,
+    },
+    /// Définition d'un terme du Glossaire
+    Define {
+        term: String,
+        #[arg(long, value_enum, default_value_t = Format::Json)]
+        format: Format,
+    },
+    /// `kb rules <numéro>` : affiche une Règle (ou Section) et ses
+    /// sous-Règles. Capturé ici car un numéro de Règle n'est ni "search" ni
+    /// "define".
+    #[command(external_subcommand)]
+    Number(Vec<String>),
 }

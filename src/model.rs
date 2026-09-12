@@ -35,6 +35,26 @@ pub struct Ruling {
     pub text: String,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct RuleWithChildren {
+    pub number: String,
+    pub title: Option<String>,
+    pub text: Option<String>,
+    pub children: Vec<RuleEntryOut>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct RuleEntryOut {
+    pub number: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct GlossaryDefinition {
+    pub term: String,
+    pub definition: String,
+}
+
 pub fn split_csv_field(raw: Option<&str>) -> Vec<String> {
     match raw {
         Some(s) if !s.is_empty() => s.split(", ").map(|p| p.trim().to_string()).collect(),
