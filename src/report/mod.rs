@@ -453,6 +453,7 @@ mod tests {
         assert_eq!(html, include_str!("golden_sample.html"));
     }
 
+    #[test]
     fn renders_structured_verdict_sections() {
         let html = render(&sample(), None);
         assert!(html.contains("Points forts"));
