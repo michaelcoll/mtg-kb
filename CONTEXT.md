@@ -12,6 +12,10 @@ _Avoid_: Card print, fiche
 Une édition précise d'une Carte dans un Set (identifiée par un uuid MTGJSON) ; l'analyse de deck n'en tient pas compte.
 _Avoid_: Printing, version, variante
 
+**Impression de référence**:
+L'Impression retenue pour illustrer une Carte dans le Rapport d'analyse : la plus récente en papier, hors promo, hors format surdimensionné et hors cartes fantaisie ; elle n'influence pas l'analyse.
+_Avoid_: Image, illustration
+
 **Set**:
 Une extension ou un produit publié regroupant des Impressions.
 _Avoid_: Édition, extension
@@ -73,6 +77,22 @@ _Avoid_: Problème, défaut
 Une Carte légale en Commander, dans l'Identité de couleur du Commandant, absente du Deck, proposée pour combler un Point faible ou renforcer une Synergie.
 _Avoid_: Recommandation, upgrade
 
+**Carte à retirer**:
+Une Carte du Deck qu'une Suggestion propose de remplacer ; facultative.
+_Avoid_: Cut, coupe
+
+**Verdict**:
+L'appréciation d'ensemble d'un Deck, composée d'un Résumé, de Points forts, de Faiblesses et de Priorités.
+_Avoid_: Conclusion, avis
+
+**Faiblesse**:
+Un défaut du Deck relevé dans le Verdict ; appréciation qualitative qui peut s'appuyer sur des Points faibles sans s'y limiter.
+_Avoid_: Point faible (qui désigne l'écart mesuré)
+
+**Priorité**:
+Une action d'amélioration du Deck, ordonnée par importance dans le Verdict.
+_Avoid_: Todo, conseil
+
 **Rapport d'analyse**:
-Le document HTML présentant Points faibles, Synergies et Suggestions pour un Deck.
+Le document HTML présentant le Verdict, les Points faibles, Synergies et Suggestions pour un Deck.
 _Avoid_: Analyse, report

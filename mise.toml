@@ -1,6 +1,7 @@
 [tools]
 rust = "1.98.1"
 "cargo:cargo-nextest" = "latest"
+"cargo:cargo-llvm-cov" = "latest"
 
 [tasks.checks]
 description = "Runs all the checks for the project"
@@ -8,13 +9,27 @@ depends = ["test", "lint", "fmt-check"]
 
 [tasks.build]
 description = "Builds the project"
-run = "cargo build"
+run = "cargo build --release"
 alias = ["b"]
+
+[tasks.install]
+description = "Installe le binaire kb dans ~/.cargo/bin"
+run = "cargo install --path . --locked"
+alias = ["i"]
 
 [tasks.test]
 description = "Runs the test suite"
 run = "cargo nextest run"
 alias = ["t"]
+
+[tasks.coverage]
+description = "Runs the test suite with coverage (terminal summary)"
+run = "cargo llvm-cov --workspace --summary-only"
+alias = ["cov"]
+
+[tasks.coverage-html]
+description = "Runs the test suite with coverage and opens an HTML report"
+run = "cargo llvm-cov --workspace --html --open"
 
 [tasks.lint]
 description = "Lints the project"

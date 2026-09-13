@@ -5,9 +5,9 @@ description: Analyse un Deck Commander de bout en bout (kb analyze → interpré
 
 # mtg-deck-analyze
 
-Orchestre le parcours complet d'analyse d'un Deck Commander, en suivant
-l'ADR "kb calcule, Claude juge" ([[kb-deterministe-claude-jugement]]) :
-`kb` calcule tout ce qui est déterministe, Claude interprète et juge.
+Orchestre le parcours complet d'analyse d'un Deck Commander, en suivant le
+principe "kb calcule, Claude juge" : `kb` calcule tout ce qui est
+déterministe, Claude interprète et juge.
 
 ## Parcours
 
@@ -45,3 +45,10 @@ l'ADR "kb calcule, Claude juge" ([[kb-deterministe-claude-jugement]]) :
   pas par une préférence générique.
 - Le design du Rapport HTML est un MVP ; d'autres itérations de design
   sont prévues séparément — ne pas sur-investir dans le style ici.
+- Si `kb` ne couvre pas un besoin rencontré pendant l'analyse (donnée
+  manquante ou incohérente, calcul absent, candidats trop peu nombreux
+  ou mal ciblés, etc.), ne compense pas en le faisant manuellement à la
+  place de `kb` — ouvre une issue sur le repo (voir
+  `docs/agents/issue-tracker.md`) décrivant le manque et son contexte
+  (Deck concerné, commande lancée, résultat obtenu vs attendu), puis
+  signale-le à l'utilisateur.
