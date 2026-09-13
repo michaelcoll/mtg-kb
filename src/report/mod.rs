@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use crate::model::{EnrichedAnalysis, ManaBase, ManaCurve, Suggestion, Synergy, UnresolvedLine};
+use crate::model::{
+    EnrichedAnalysis, ManaBase, ManaCurve, Suggestion, Synergy, UnresolvedLine, Verdict,
+};
 
 pub mod validate;
 
@@ -40,6 +42,17 @@ fn list_or_none(items: &[String]) -> String {
     format!("<ul>{lis}</ul>")
 }
 
+fn ordered_list_or_none(items: &[String]) -> String {
+    if items.is_empty() {
+        return "<p class=\"muted\">Aucune.</p>".to_string();
+    }
+    let lis: String = items
+        .iter()
+        .map(|i| format!("<li>{}</li>", escape_html(i)))
+        .collect();
+    format!("<ol>{lis}</ol>")
+}
+
 const SECTION_H2_STYLE: &str = "margin-top:0;border-top:none;padding-top:0;border-bottom:none";
 
 fn render_head(commander_name: &str) -> String {
@@ -63,6 +76,7 @@ fn render_head(commander_name: &str) -> String {
   main {{ max-width: 880px; margin: 0 auto; }}
   h1 {{ font-size: 1.75rem; margin-bottom: 0.25rem; }}
   h2 {{ font-size: 1.15rem; margin-top: 2.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }}
+  h3 {{ font-size: 0.85rem; margin: 1rem 0 0.35rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }}
   .muted {{ color: var(--muted); }}
   .badge {{ display: inline-block; padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.85rem; font-weight: 600; }}
   .badge-ok {{ background: rgba(62,207,142,0.15); color: var(--ok); }}
@@ -93,11 +107,21 @@ fn render_header_section(commander_name: &str, card_count: u32, verdict_badge: &
     )
 }
 
-fn render_verdict_section(verdict: &str) -> String {
+fn render_verdict_section(verdict: &Verdict) -> String {
+    let summary = escape_html(&verdict.summary);
+    let strengths = list_or_none(&verdict.strengths);
+    let weaknesses = list_or_none(&verdict.weaknesses);
+    let priorities = ordered_list_or_none(&verdict.priorities);
     format!(
         r#"  <section>
     <h2 style="{SECTION_H2_STYLE}">Verdict</h2>
-    <p>{verdict}</p>
+    <p>{summary}</p>
+    <h3>Points forts</h3>
+    {strengths}
+    <h3>Faiblesses</h3>
+    {weaknesses}
+    <h3>Priorités</h3>
+    {priorities}
   </section>
 "#
     )
@@ -278,7 +302,7 @@ pub fn render(enriched: &EnrichedAnalysis) -> String {
         a.card_count,
         verdict_badge,
     ));
-    let verdict = trimmed_with_newline(render_verdict_section(&escape_html(&enriched.verdict)));
+    let verdict = trimmed_with_newline(render_verdict_section(&enriched.verdict));
     let mana_curve = trimmed_with_newline(render_mana_curve_section(&a.mana_curve));
     let mana_base = trimmed_with_newline(render_mana_base_section(&a.mana_base));
     let roles = trimmed_with_newline(render_roles_section(&a.role_counts));
@@ -349,7 +373,12 @@ mod tests {
                 }],
                 candidates: vec![],
             },
-            verdict: "Solide, manque de ramp".to_string(),
+            verdict: Verdict {
+                summary: "Solide, manque de ramp".to_string(),
+                strengths: vec!["Base de mana solide".to_string()],
+                weaknesses: vec!["Manque de ramp".to_string()],
+                priorities: vec!["Ajouter 2-3 sources de ramp".to_string()],
+            },
             suggestions: vec![Suggestion {
                 card_name: "Rampant Growth".to_string(),
                 justification: "Comble le manque de ramp".to_string(),
@@ -380,11 +409,41 @@ mod tests {
         assert!(html.contains("&lt;script&gt;"));
     }
 
-    /// Non-régression du découpage par section (issue #21) : le HTML produit
-    /// pour une analyse de référence ne doit pas changer d'un octet.
+    /// Non-régression du rendu (issue #21) : le HTML produit pour une
+    /// analyse de référence ne doit pas changer d'un octet en dehors des
+    /// évolutions volontaires (Verdict structuré, images Scryfall, ...).
     #[test]
     fn render_output_is_stable_across_the_section_split() {
         let html = render(&sample());
         assert_eq!(html, include_str!("golden_sample.html"));
+    }
+
+    #[test]
+    fn renders_structured_verdict_sections() {
+        let html = render(&sample());
+        assert!(html.contains("Points forts"));
+        assert!(html.contains("Base de mana solide"));
+        assert!(html.contains("Faiblesses"));
+        assert!(html.contains("Manque de ramp"));
+        assert!(html.contains("Priorités"));
+        assert!(html.contains("Ajouter 2-3 sources de ramp"));
+        assert!(html.contains("<ol>"));
+    }
+
+    #[test]
+    fn escapes_untrusted_content_in_verdict_lists() {
+        let mut enriched = sample();
+        enriched.verdict.strengths = vec!["<script>alert(1)</script>".to_string()];
+        let html = render(&enriched);
+        assert!(!html.contains("<script>alert(1)</script>"));
+        assert!(html.contains("&lt;script&gt;"));
+    }
+
+    #[test]
+    fn renders_aucune_for_empty_verdict_priorities() {
+        let mut enriched = sample();
+        enriched.verdict.priorities = vec![];
+        let html = render(&enriched);
+        assert!(html.contains("Aucune."));
     }
 }

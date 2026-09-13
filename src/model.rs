@@ -133,13 +133,28 @@ pub struct Suggestion {
     pub justification: String,
 }
 
+/// L'appréciation d'ensemble d'un Deck (voir CONTEXT.md) : Résumé, Points
+/// forts, Faiblesses (qualitatives, distinctes des Points faibles mesurés
+/// par `kb`) et Priorités (actions d'amélioration, ordonnées par
+/// importance).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Verdict {
+    pub summary: String,
+    #[serde(default)]
+    pub strengths: Vec<String>,
+    #[serde(default)]
+    pub weaknesses: Vec<String>,
+    #[serde(default)]
+    pub priorities: Vec<String>,
+}
+
 /// Le JSON de `kb analyze` enrichi par Claude : verdict et Suggestions
 /// retenues parmi les candidats. `kb report` prend ce JSON en entrée.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EnrichedAnalysis {
     #[serde(flatten)]
     pub analysis: AnalyzeResult,
-    pub verdict: String,
+    pub verdict: Verdict,
     #[serde(default)]
     pub suggestions: Vec<Suggestion>,
 }
@@ -148,5 +163,49 @@ pub fn split_csv_field(raw: Option<&str>) -> Vec<String> {
     match raw {
         Some(s) if !s.is_empty() => s.split(", ").map(|p| p.trim().to_string()).collect(),
         _ => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn minimal_analysis_json() -> String {
+        r#"{
+            "commander": {
+                "name": "Atraxa, Praetors' Voice", "mana_cost": null, "mana_value": null,
+                "type_line": null, "types": [], "subtypes": [], "supertypes": [],
+                "oracle_text": null, "color_identity": [], "colors": [], "keywords": [],
+                "power": null, "toughness": null, "loyalty": null
+            },
+            "cards": [], "unresolved": [], "card_count": 100, "construction_errors": [],
+            "mana_curve": {"buckets": [], "average_mana_value": 0.0},
+            "mana_base": {"land_count": 37, "sources_by_color": {}, "symbols_by_color": {}},
+            "role_counts": {}, "weaknesses": [], "synergies": [], "candidates": []
+        }"#
+        .to_string()
+    }
+
+    #[test]
+    fn rejects_the_old_string_verdict_format() {
+        let json = format!(
+            r#"{{"verdict": "Solide, manque de ramp", {}}}"#,
+            &minimal_analysis_json()[1..minimal_analysis_json().len() - 1]
+        );
+        let result: Result<EnrichedAnalysis, _> = serde_json::from_str(&json);
+        assert!(
+            result.is_err(),
+            "un verdict en chaîne de texte doit être rejeté"
+        );
+    }
+
+    #[test]
+    fn accepts_the_structured_verdict_format() {
+        let json = format!(
+            r#"{{"verdict": {{"summary": "Solide", "strengths": [], "weaknesses": [], "priorities": []}}, {}}}"#,
+            &minimal_analysis_json()[1..minimal_analysis_json().len() - 1]
+        );
+        let result: Result<EnrichedAnalysis, _> = serde_json::from_str(&json);
+        assert!(result.is_ok(), "{:?}", result.err());
     }
 }
