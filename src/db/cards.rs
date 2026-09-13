@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, Row};
 
-use crate::model::{Card, Ruling, SetInfo, split_csv_field};
+use crate::model::{Card, ReferencePrinting, Ruling, SetInfo, split_csv_field};
 
 /// Colonnes de `cardLegalities` acceptées comme filtre de format : whitelist
 /// stricte, car le nom de colonne est injecté tel quel dans le SQL.
@@ -258,6 +258,42 @@ impl CardsDb {
             }
         }
     }
+
+    /// Résout l'Impression de référence d'une Carte (voir CONTEXT.md) : la
+    /// plus récente en papier, hors promo, hors format surdimensionné et
+    /// hors cartes fantaisie. À défaut, relâche d'abord le filtre promo,
+    /// puis les filtres surdimensionné/fantaisie. `None` si aucune
+    /// Impression papier n'a de `scryfallId`.
+    pub fn reference_printing(&self, name: &str) -> Result<Option<ReferencePrinting>> {
+        const TIERS: &[&str] = &[
+            "AND (c.isPromo = 0 OR c.isPromo IS NULL) \
+             AND (c.isOversized = 0 OR c.isOversized IS NULL) \
+             AND (c.isFunny = 0 OR c.isFunny IS NULL)",
+            "AND (c.isOversized = 0 OR c.isOversized IS NULL) \
+             AND (c.isFunny = 0 OR c.isFunny IS NULL)",
+            "",
+        ];
+        for extra_filter in TIERS {
+            let sql = format!(
+                "SELECT c.setCode, c.number, ci.scryfallId FROM cards c \
+                 JOIN cardIdentifiers ci ON ci.uuid = c.uuid \
+                 LEFT JOIN sets s ON s.code = c.setCode \
+                 WHERE c.name = ?1 AND c.availability LIKE '%paper%' \
+                 AND ci.scryfallId IS NOT NULL {extra_filter} \
+                 ORDER BY s.releaseDate DESC LIMIT 1"
+            );
+            let mut stmt = self.conn.prepare(&sql)?;
+            let mut rows = stmt.query([name])?;
+            if let Some(row) = rows.next()? {
+                return Ok(Some(ReferencePrinting {
+                    set_code: row.get(0)?,
+                    number: row.get(1)?,
+                    scryfall_id: row.get(2)?,
+                }));
+            }
+        }
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
@@ -274,10 +310,12 @@ mod tests {
                 uuid TEXT, name TEXT, manaCost TEXT, manaValue REAL, type TEXT, types TEXT,
                 subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
                 colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT,
-                setCode TEXT
+                setCode TEXT, number TEXT, availability TEXT,
+                isPromo BOOLEAN, isOversized BOOLEAN, isFunny BOOLEAN
             );
             CREATE TABLE cardLegalities (uuid TEXT, commander TEXT, standard TEXT);
             CREATE TABLE cardRulings (uuid TEXT, date TEXT, text TEXT);
+            CREATE TABLE cardIdentifiers (uuid TEXT, scryfallId TEXT);
             CREATE TABLE sets (
                 code TEXT, name TEXT, releaseDate TEXT, type TEXT, block TEXT,
                 baseSetSize INTEGER, totalSetSize INTEGER
@@ -285,22 +323,34 @@ mod tests {
 
             INSERT INTO cards VALUES (
                 'sol-lea', 'Sol Ring', '{1}', 1.0, 'Artifact', 'Artifact', NULL, NULL,
-                '{T}: Add {C}{C}.', NULL, NULL, NULL, NULL, NULL, NULL, 'LEA'
+                '{T}: Add {C}{C}.', NULL, NULL, NULL, NULL, NULL, NULL, 'LEA',
+                '1', 'paper', 0, 0, 0
             );
             INSERT INTO cards VALUES (
                 'sol-c21', 'Sol Ring', '{1}', 1.0, 'Artifact', 'Artifact', NULL, NULL,
-                '{T}: Add {C}{C}.', NULL, NULL, NULL, NULL, NULL, NULL, 'C21'
+                '{T}: Add {C}{C}.', NULL, NULL, NULL, NULL, NULL, NULL, 'C21',
+                '263', 'paper', 0, 0, 0
             );
             INSERT INTO cards VALUES (
                 'atraxa', 'Atraxa, Praetors'' Voice', '{G}{W}{U}{B}', 4.0,
                 'Legendary Creature — Phyrexian Angel Horror', 'Creature',
                 'Phyrexian, Angel, Horror', 'Legendary', 'Flying, vigilance...',
                 'B, G, U, W', 'W, U, B, G', 'Deathtouch, Flying, Lifelink, Vigilance, Proliferate',
-                '4', '4', NULL, 'M15'
+                '4', '4', NULL, 'M15', '1', 'paper', 0, 0, 0
             );
             INSERT INTO cards VALUES (
                 'llanowar', 'Llanowar Elves', '{G}', 1.0, 'Creature — Elf Druid', 'Creature',
-                'Elf, Druid', NULL, '{T}: Add {G}.', 'G', 'G', NULL, '1', '1', NULL, 'M19'
+                'Elf, Druid', NULL, '{T}: Add {G}.', 'G', 'G', NULL, '1', '1', NULL, 'M19',
+                '183', 'paper', 0, 0, 0
+            );
+            INSERT INTO cards VALUES (
+                'promo-only', 'Command Tower', NULL, 0.0, 'Land', 'Land', NULL, NULL,
+                'Add one mana of any color in your Commander''s color identity.',
+                NULL, NULL, NULL, NULL, NULL, NULL, 'PPRO', '1', 'paper', 1, 0, 0
+            );
+            INSERT INTO cards VALUES (
+                'no-scryfall', 'Obscure Test Card', NULL, 0.0, 'Land', 'Land', NULL, NULL,
+                NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'NST', '1', 'paper', 0, 0, 0
             );
 
             INSERT INTO cardLegalities VALUES ('sol-lea', 'Legal', 'Legal');
@@ -311,7 +361,14 @@ mod tests {
             INSERT INTO cardRulings VALUES ('atraxa', '2023-02-04', 'Proliferate ruling one.');
             INSERT INTO cardRulings VALUES ('atraxa', '2023-02-04', 'Proliferate ruling two.');
 
+            INSERT INTO cardIdentifiers VALUES ('sol-lea', 'scryfall-sol-lea');
+            INSERT INTO cardIdentifiers VALUES ('sol-c21', 'scryfall-sol-c21');
+            INSERT INTO cardIdentifiers VALUES ('promo-only', 'scryfall-promo-only');
+
             INSERT INTO sets VALUES ('LEA', 'Limited Edition Alpha', '1993-08-05', 'core', 'Core Set', 295, 295);
+            INSERT INTO sets VALUES ('C21', 'Commander 2021', '2021-04-23', 'commander', NULL, 81, 81);
+            INSERT INTO sets VALUES ('PPRO', 'Promo Pack', '2020-01-01', 'promo', NULL, NULL, NULL);
+            INSERT INTO sets VALUES ('NST', 'No Scryfall Test', '2020-01-01', 'promo', NULL, NULL, NULL);
             "#,
         )
         .unwrap();
@@ -490,5 +547,48 @@ mod tests {
         let (_dir, path) = fixture_db();
         let db = CardsDb::open(&path).unwrap();
         assert!(db.rulings_by_name("Nope").unwrap().is_none());
+    }
+
+    #[test]
+    fn reference_printing_picks_the_most_recent_non_promo_paper_printing() {
+        let (_dir, path) = fixture_db();
+        let db = CardsDb::open(&path).unwrap();
+        let printing = db
+            .reference_printing("Sol Ring")
+            .unwrap()
+            .expect("printing found");
+        assert_eq!(printing.set_code, "C21");
+        assert_eq!(printing.number, "263");
+        assert_eq!(printing.scryfall_id, "scryfall-sol-c21");
+    }
+
+    #[test]
+    fn reference_printing_falls_back_to_promo_when_only_promo_exists() {
+        let (_dir, path) = fixture_db();
+        let db = CardsDb::open(&path).unwrap();
+        let printing = db
+            .reference_printing("Command Tower")
+            .unwrap()
+            .expect("printing found");
+        assert_eq!(printing.set_code, "PPRO");
+        assert_eq!(printing.scryfall_id, "scryfall-promo-only");
+    }
+
+    #[test]
+    fn reference_printing_none_without_any_scryfall_id() {
+        let (_dir, path) = fixture_db();
+        let db = CardsDb::open(&path).unwrap();
+        assert!(
+            db.reference_printing("Obscure Test Card")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn reference_printing_none_for_unknown_card() {
+        let (_dir, path) = fixture_db();
+        let db = CardsDb::open(&path).unwrap();
+        assert!(db.reference_printing("Not A Real Card").unwrap().is_none());
     }
 }

@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
 use crate::model::{
-    EnrichedAnalysis, ManaBase, ManaCurve, Suggestion, Synergy, UnresolvedLine, Verdict,
+    EnrichedAnalysis, ManaBase, ManaCurve, ReferencePrinting, Suggestion, Synergy, UnresolvedLine,
+    Verdict,
 };
 
 pub mod validate;
@@ -93,15 +94,45 @@ fn render_head(commander_name: &str) -> String {
   .bar-count {{ width: 2rem; color: var(--muted); }}
   .stat {{ display: inline-block; margin-right: 2rem; }}
   .stat strong {{ display: block; font-size: 1.4rem; }}
+  .commander-art {{ display: block; float: left; margin: 0 1rem 0.5rem 0; }}
+  .commander-art img {{ display: block; width: 180px; border-radius: 12px; border: 1px solid var(--border); }}
 </style>
 </head>
 "#
     )
 }
 
-fn render_header_section(commander_name: &str, card_count: u32, verdict_badge: &str) -> String {
+/// Portrait du Commandant depuis l'endpoint officiel Scryfall, avec lien
+/// vers la page de l'Impression de référence et repli sur le nom si
+/// l'image ne charge pas (hors ligne) ou si aucune Impression de référence
+/// n'a de `scryfallId`.
+fn render_commander_art(commander_name: &str, printing: Option<&ReferencePrinting>) -> String {
+    let Some(printing) = printing else {
+        return String::new();
+    };
+    let scryfall_id = &printing.scryfall_id;
+    let set_code = printing.set_code.to_lowercase();
+    let number = &printing.number;
     format!(
-        r#"<h1>{commander_name}</h1>
+        r#"<span class="commander-art">
+    <a href="https://scryfall.com/card/{set_code}/{number}" target="_blank" rel="noopener">
+      <img src="https://api.scryfall.com/cards/{scryfall_id}?format=image&amp;version=normal" alt="{commander_name}" onerror="this.hidden=true;this.nextElementSibling.hidden=false;">
+    </a>
+    <span class="commander-art-fallback muted" hidden>{commander_name}</span>
+  </span>
+  "#
+    )
+}
+
+fn render_header_section(
+    commander_name: &str,
+    card_count: u32,
+    verdict_badge: &str,
+    printing: Option<&ReferencePrinting>,
+) -> String {
+    let art = render_commander_art(commander_name, printing);
+    format!(
+        r#"{art}<h1>{commander_name}</h1>
   <p class="muted">{card_count} cartes {verdict_badge}</p>
 "#
     )
@@ -274,19 +305,22 @@ fn render_unresolved_section(unresolved: &[UnresolvedLine]) -> String {
     )
 }
 
-/// Rendu HTML autonome (MVP) du Rapport d'analyse à partir du JSON de
-/// `kb analyze` enrichi par Claude (verdict, Suggestions retenues).
-///
-/// Chaque section est rendue par sa propre fonction (issue #21) pour que les
-/// évolutions futures (Verdict structuré, images Scryfall, ...) touchent une
-/// seule section sans toucher aux autres.
 /// Retire les espaces de fin et ajoute un unique saut de ligne, pour
 /// recoller des sections rendues indépendamment dans un gabarit commun.
 fn trimmed_with_newline(s: String) -> String {
     format!("{}\n", s.trim_end())
 }
 
-pub fn render(enriched: &EnrichedAnalysis) -> String {
+/// Rendu HTML autonome (MVP) du Rapport d'analyse à partir du JSON de
+/// `kb analyze` enrichi par Claude (verdict, Suggestions retenues).
+///
+/// Chaque section est rendue par sa propre fonction (issue #21) pour que les
+/// évolutions futures (Verdict structuré, images Scryfall, ...) touchent une
+/// seule section sans toucher aux autres.
+pub fn render(
+    enriched: &EnrichedAnalysis,
+    commander_printing: Option<&ReferencePrinting>,
+) -> String {
     let a = &enriched.analysis;
 
     let verdict_badge = if a.construction_errors.is_empty() {
@@ -301,6 +335,7 @@ pub fn render(enriched: &EnrichedAnalysis) -> String {
         &commander_name,
         a.card_count,
         verdict_badge,
+        commander_printing,
     ));
     let verdict = trimmed_with_newline(render_verdict_section(&enriched.verdict));
     let mana_curve = trimmed_with_newline(render_mana_curve_section(&a.mana_curve));
@@ -393,7 +428,7 @@ mod tests {
 
     #[test]
     fn renders_all_sections() {
-        let html = render(&sample());
+        let html = render(&sample(), None);
         assert!(html.contains("Atraxa, Praetors&#39; Voice"));
         assert!(html.contains("Solide, manque de ramp"));
         assert!(html.contains("Rampant Growth"));
@@ -404,7 +439,7 @@ mod tests {
 
     #[test]
     fn escapes_untrusted_content() {
-        let html = render(&sample());
+        let html = render(&sample(), None);
         assert!(!html.contains("<script>alert(1)</script>"));
         assert!(html.contains("&lt;script&gt;"));
     }
@@ -414,13 +449,12 @@ mod tests {
     /// évolutions volontaires (Verdict structuré, images Scryfall, ...).
     #[test]
     fn render_output_is_stable_across_the_section_split() {
-        let html = render(&sample());
+        let html = render(&sample(), None);
         assert_eq!(html, include_str!("golden_sample.html"));
     }
 
-    #[test]
     fn renders_structured_verdict_sections() {
-        let html = render(&sample());
+        let html = render(&sample(), None);
         assert!(html.contains("Points forts"));
         assert!(html.contains("Base de mana solide"));
         assert!(html.contains("Faiblesses"));
@@ -434,7 +468,7 @@ mod tests {
     fn escapes_untrusted_content_in_verdict_lists() {
         let mut enriched = sample();
         enriched.verdict.strengths = vec!["<script>alert(1)</script>".to_string()];
-        let html = render(&enriched);
+        let html = render(&enriched, None);
         assert!(!html.contains("<script>alert(1)</script>"));
         assert!(html.contains("&lt;script&gt;"));
     }
@@ -443,7 +477,28 @@ mod tests {
     fn renders_aucune_for_empty_verdict_priorities() {
         let mut enriched = sample();
         enriched.verdict.priorities = vec![];
-        let html = render(&enriched);
+        let html = render(&enriched, None);
         assert!(html.contains("Aucune."));
+    }
+
+    #[test]
+    fn renders_commander_image_with_scryfall_link_when_printing_is_known() {
+        let printing = ReferencePrinting {
+            scryfall_id: "abc-123".to_string(),
+            set_code: "M15".to_string(),
+            number: "4".to_string(),
+        };
+        let html = render(&sample(), Some(&printing));
+        assert!(
+            html.contains("https://api.scryfall.com/cards/abc-123?format=image&amp;version=normal")
+        );
+        assert!(html.contains("https://scryfall.com/card/m15/4"));
+    }
+
+    #[test]
+    fn falls_back_to_name_when_no_reference_printing() {
+        let html = render(&sample(), None);
+        assert!(!html.contains("scryfall.com"));
+        assert!(html.contains("<h1>Atraxa, Praetors&#39; Voice</h1>"));
     }
 }

@@ -31,7 +31,9 @@ pub fn run(json_path: &str) -> Result<()> {
         bail!("Suggestions invalides, aucun rapport écrit :\n{messages}");
     }
 
-    let html = report::render(&enriched);
+    let commander_printing = cards_db.reference_printing(&enriched.analysis.commander.name)?;
+
+    let html = report::render(&enriched, commander_printing.as_ref());
 
     let dir = PathBuf::from(REPORTS_DIR);
     std::fs::create_dir_all(&dir)?;
