@@ -170,8 +170,10 @@ pub fn split_csv_field(raw: Option<&str>) -> Vec<String> {
 mod tests {
     use super::*;
 
-    fn minimal_analysis_json() -> String {
-        r#"{
+    /// Analyse minimale valide, en `serde_json::Value` pour que les tests
+    /// puissent y fusionner un `verdict` sans manipuler du JSON en chaîne.
+    fn minimal_analysis_json(verdict: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
             "commander": {
                 "name": "Atraxa, Praetors' Voice", "mana_cost": null, "mana_value": null,
                 "type_line": null, "types": [], "subtypes": [], "supertypes": [],
@@ -181,18 +183,15 @@ mod tests {
             "cards": [], "unresolved": [], "card_count": 100, "construction_errors": [],
             "mana_curve": {"buckets": [], "average_mana_value": 0.0},
             "mana_base": {"land_count": 37, "sources_by_color": {}, "symbols_by_color": {}},
-            "role_counts": {}, "weaknesses": [], "synergies": [], "candidates": []
-        }"#
-        .to_string()
+            "role_counts": {}, "weaknesses": [], "synergies": [], "candidates": [],
+            "verdict": verdict,
+        })
     }
 
     #[test]
     fn rejects_the_old_string_verdict_format() {
-        let json = format!(
-            r#"{{"verdict": "Solide, manque de ramp", {}}}"#,
-            &minimal_analysis_json()[1..minimal_analysis_json().len() - 1]
-        );
-        let result: Result<EnrichedAnalysis, _> = serde_json::from_str(&json);
+        let json = minimal_analysis_json(serde_json::json!("Solide, manque de ramp"));
+        let result: Result<EnrichedAnalysis, _> = serde_json::from_value(json);
         assert!(
             result.is_err(),
             "un verdict en chaîne de texte doit être rejeté"
@@ -201,11 +200,10 @@ mod tests {
 
     #[test]
     fn accepts_the_structured_verdict_format() {
-        let json = format!(
-            r#"{{"verdict": {{"summary": "Solide", "strengths": [], "weaknesses": [], "priorities": []}}, {}}}"#,
-            &minimal_analysis_json()[1..minimal_analysis_json().len() - 1]
-        );
-        let result: Result<EnrichedAnalysis, _> = serde_json::from_str(&json);
+        let json = minimal_analysis_json(serde_json::json!({
+            "summary": "Solide", "strengths": [], "weaknesses": [], "priorities": []
+        }));
+        let result: Result<EnrichedAnalysis, _> = serde_json::from_value(json);
         assert!(result.is_ok(), "{:?}", result.err());
     }
 }
