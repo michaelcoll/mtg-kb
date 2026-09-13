@@ -187,7 +187,12 @@ mod tests {
                 synergies: vec![],
                 candidates: vec![],
             },
-            verdict: "Solide".to_string(),
+            verdict: Verdict {
+                summary: "Solide".to_string(),
+                strengths: vec![],
+                weaknesses: vec![],
+                priorities: vec![],
+            },
             suggestions,
         }
     }
