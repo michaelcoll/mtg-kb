@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 
 use crate::model::{EnrichedAnalysis, ManaBase, ManaCurve, Suggestion, Synergy, UnresolvedLine};
 
+pub mod validate;
+
 /// Nom de fichier "slug" dérivé du nom du Commandant : minuscules,
 /// caractères non alphanumériques réduits à des tirets simples.
 pub fn slugify(name: &str) -> String {

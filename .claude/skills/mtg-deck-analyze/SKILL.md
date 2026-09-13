@@ -28,10 +28,15 @@ déterministe, Claude interprète et juge.
    `[{"card_name": "...", "justification": "..."}]` pour `suggestions`).
    Sauvegarde ce JSON enrichi dans un fichier temporaire.
 
-3. **`kb report <json enrichi>`** — génère le Rapport d'analyse HTML
-   autonome dans `reports/<commandant>-<date>.html` : résumé/verdict,
-   courbe, base de mana, Rôles, Points faibles, Synergies, Suggestions
-   (avec justification), Cartes non résolues.
+3. **`kb report <json enrichi>`** — valide chaque Suggestion (existe,
+   légale en Commander, dans l'Identité de couleur du Commandant, absente
+   du Deck) puis génère le Rapport d'analyse HTML autonome dans
+   `reports/<commandant>-<date>.html` : résumé/verdict, courbe, base de
+   mana, Rôles, Points faibles, Synergies, Suggestions (avec
+   justification), Cartes non résolues. Si une Suggestion viole une de
+   ces contraintes, `kb report` échoue en nommant la Carte et la règle
+   violée, sans écrire de rapport : corrige les `suggestions` du JSON
+   enrichi et relance, ne contourne pas l'échec.
 
 ## Points d'attention
 

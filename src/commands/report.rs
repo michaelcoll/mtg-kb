@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 
+use crate::data_dir::cards_db_path;
+use crate::db::cards::CardsDb;
 use crate::model::EnrichedAnalysis;
 use crate::report;
 
@@ -12,6 +14,13 @@ pub fn run(json_path: &str) -> Result<()> {
         .with_context(|| format!("lecture du fichier {json_path}"))?;
     let enriched: EnrichedAnalysis = serde_json::from_str(&content)
         .with_context(|| format!("« {json_path} » n'est pas un JSON d'analyse enrichi valide"))?;
+
+    let cards_db = CardsDb::open(&cards_db_path())?;
+    let violations = report::validate::validate_suggestions(&enriched, &cards_db);
+    if !violations.is_empty() {
+        let messages = violations.join("\n");
+        bail!("Suggestions invalides, aucun rapport écrit :\n{messages}");
+    }
 
     let html = report::render(&enriched);
 
