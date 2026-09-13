@@ -1,4 +1,6 @@
-use crate::model::EnrichedAnalysis;
+use std::collections::BTreeMap;
+
+use crate::model::{EnrichedAnalysis, ManaBase, ManaCurve, Suggestion, Synergy, UnresolvedLine};
 
 /// Nom de fichier "slug" dérivé du nom du Commandant : minuscules,
 /// caractères non alphanumériques réduits à des tirets simples.
@@ -99,7 +101,7 @@ fn render_verdict_section(verdict: &str) -> String {
     )
 }
 
-fn render_mana_curve_section(curve: &crate::model::ManaCurve) -> String {
+fn render_mana_curve_section(curve: &ManaCurve) -> String {
     let max_bucket_count = curve.buckets.iter().map(|b| b.count).max().unwrap_or(1);
     let curve_bars: String = curve
         .buckets
@@ -131,7 +133,7 @@ fn render_mana_curve_section(curve: &crate::model::ManaCurve) -> String {
     )
 }
 
-fn render_mana_base_section(mana_base: &crate::model::ManaBase) -> String {
+fn render_mana_base_section(mana_base: &ManaBase) -> String {
     let sources_rows: String = mana_base
         .sources_by_color
         .iter()
@@ -155,7 +157,7 @@ fn render_mana_base_section(mana_base: &crate::model::ManaBase) -> String {
     )
 }
 
-fn render_roles_section(role_counts: &std::collections::BTreeMap<String, u32>) -> String {
+fn render_roles_section(role_counts: &BTreeMap<String, u32>) -> String {
     let role_rows: String = role_counts
         .iter()
         .map(|(role, count)| format!("<tr><td>{}</td><td>{count}</td></tr>", escape_html(role)))
@@ -184,7 +186,7 @@ fn render_weaknesses_section(weaknesses: &[String]) -> String {
     )
 }
 
-fn render_synergies_section(synergies: &[crate::model::Synergy]) -> String {
+fn render_synergies_section(synergies: &[Synergy]) -> String {
     let synergy_items: String = synergies
         .iter()
         .map(|s| {
@@ -205,7 +207,7 @@ fn render_synergies_section(synergies: &[crate::model::Synergy]) -> String {
     )
 }
 
-fn render_suggestions_section(suggestions: &[crate::model::Suggestion]) -> String {
+fn render_suggestions_section(suggestions: &[Suggestion]) -> String {
     let suggestion_items: String = suggestions
         .iter()
         .map(|s| {
@@ -226,7 +228,7 @@ fn render_suggestions_section(suggestions: &[crate::model::Suggestion]) -> Strin
     )
 }
 
-fn render_unresolved_section(unresolved: &[crate::model::UnresolvedLine]) -> String {
+fn render_unresolved_section(unresolved: &[UnresolvedLine]) -> String {
     let unresolved_items: String = unresolved
         .iter()
         .map(|u| format!("<li>{} x{}</li>", escape_html(&u.name), u.quantity))
@@ -252,6 +254,12 @@ fn render_unresolved_section(unresolved: &[crate::model::UnresolvedLine]) -> Str
 /// Chaque section est rendue par sa propre fonction (issue #21) pour que les
 /// évolutions futures (Verdict structuré, images Scryfall, ...) touchent une
 /// seule section sans toucher aux autres.
+/// Retire les espaces de fin et ajoute un unique saut de ligne, pour
+/// recoller des sections rendues indépendamment dans un gabarit commun.
+fn trimmed_with_newline(s: String) -> String {
+    format!("{}\n", s.trim_end())
+}
+
 pub fn render(enriched: &EnrichedAnalysis) -> String {
     let a = &enriched.analysis;
 
@@ -260,41 +268,25 @@ pub fn render(enriched: &EnrichedAnalysis) -> String {
     } else {
         "<span class=\"badge badge-error\">Erreurs de construction</span>"
     };
+    let commander_name = escape_html(&a.commander.name);
 
-    let head = render_head(&escape_html(&a.commander.name));
-    let header =
-        render_header_section(&escape_html(&a.commander.name), a.card_count, verdict_badge)
-            .trim_end()
-            .to_string();
-    let verdict = render_verdict_section(&escape_html(&enriched.verdict))
-        .trim_end()
-        .to_string()
-        + "\n";
-    let mana_curve = render_mana_curve_section(&a.mana_curve)
-        .trim_end()
-        .to_string()
-        + "\n";
-    let mana_base = render_mana_base_section(&a.mana_base)
-        .trim_end()
-        .to_string()
-        + "\n";
-    let roles = render_roles_section(&a.role_counts).trim_end().to_string() + "\n";
-    let weaknesses = render_weaknesses_section(&a.weaknesses)
-        .trim_end()
-        .to_string()
-        + "\n";
-    let synergies = render_synergies_section(&a.synergies)
-        .trim_end()
-        .to_string()
-        + "\n";
-    let suggestions = render_suggestions_section(&enriched.suggestions)
-        .trim_end()
-        .to_string()
-        + "\n";
+    let head = render_head(&commander_name);
+    let header = trimmed_with_newline(render_header_section(
+        &commander_name,
+        a.card_count,
+        verdict_badge,
+    ));
+    let verdict = trimmed_with_newline(render_verdict_section(&escape_html(&enriched.verdict)));
+    let mana_curve = trimmed_with_newline(render_mana_curve_section(&a.mana_curve));
+    let mana_base = trimmed_with_newline(render_mana_base_section(&a.mana_base));
+    let roles = trimmed_with_newline(render_roles_section(&a.role_counts));
+    let weaknesses = trimmed_with_newline(render_weaknesses_section(&a.weaknesses));
+    let synergies = trimmed_with_newline(render_synergies_section(&a.synergies));
+    let suggestions = trimmed_with_newline(render_suggestions_section(&enriched.suggestions));
     let unresolved = render_unresolved_section(&a.unresolved);
 
     format!(
-        "{head}<body>\n<main>\n  {header}\n\n{verdict}\n{mana_curve}\n{mana_base}\n{roles}\n{weaknesses}\n{synergies}\n{suggestions}\n{unresolved}</main>\n</body>\n</html>\n"
+        "{head}<body>\n<main>\n  {header}\n{verdict}\n{mana_curve}\n{mana_base}\n{roles}\n{weaknesses}\n{synergies}\n{suggestions}\n{unresolved}</main>\n</body>\n</html>\n"
     )
 }
 
