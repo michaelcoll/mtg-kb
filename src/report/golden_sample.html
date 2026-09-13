@@ -36,6 +36,14 @@
   .stat strong { display: block; font-size: 1.4rem; }
   .commander-art { display: block; float: left; margin: 0 1rem 0.5rem 0; }
   .commander-art img { display: block; width: 180px; border-radius: 12px; border: 1px solid var(--border); }
+  .suggestion-list { list-style: none; padding: 0; }
+  .suggestion-row { display: flex; align-items: flex-start; gap: 0.75rem; }
+  .suggestion-art { flex: none; display: block; }
+  .suggestion-art img { display: block; width: 60px; border-radius: 6px; border: 1px solid var(--border); }
+  .suggestion-body { flex: 1 1 auto; min-width: 0; }
+  @media (max-width: 480px) {
+    .suggestion-art img { width: 44px; }
+  }
 </style>
 </head>
 <body>
@@ -89,7 +97,7 @@
 
   <section>
     <h2 style="margin-top:0;border-top:none;padding-top:0;border-bottom:none">Suggestions</h2>
-    <ul><li><strong>Rampant Growth</strong><p>Comble le manque de ramp</p></li></ul>
+    <ul class="suggestion-list"><li class="suggestion-row"><span class="suggestion-body"><strong>Rampant Growth</strong><p>Comble le manque de ramp</p></span></li></ul>
   </section>
 
   <section>
