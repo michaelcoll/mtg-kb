@@ -277,9 +277,17 @@ fn render_synergies_section(synergies: &[Synergy]) -> String {
     )
 }
 
-/// Chaque Suggestion en ligne : vignette de l'Impression de référence à
-/// gauche (même mécanisme que le portrait du Commandant), nom et
-/// justification à droite. `printings[i]` correspond à `suggestions[i]`.
+/// L'Impression de référence d'une Suggestion et, si elle en propose une,
+/// celle de sa Carte à retirer. Regroupe les deux plutôt que de les passer
+/// en deux slices parallèles à `suggestions` : l'alignement positionnel
+/// entre trois collections indépendantes s'est révélé fragile (voir la
+/// revue de #25/#26).
+#[derive(Debug, Default, Clone)]
+pub struct SuggestionPrintings {
+    pub printing: Option<ReferencePrinting>,
+    pub card_to_remove_printing: Option<ReferencePrinting>,
+}
+
 /// Bloc « Carte à retirer » (voir CONTEXT.md) : plus petit que la
 /// Suggestion, avec sa propre vignette si une Impression de référence est
 /// connue. Absent du rendu si la Suggestion n'en propose pas.
@@ -297,31 +305,31 @@ fn render_card_to_remove(
     )
 }
 
+/// Chaque Suggestion en ligne : vignette de l'Impression de référence à
+/// gauche (même mécanisme que le portrait du Commandant), nom et
+/// justification à droite, Carte à retirer le cas échéant. `printings[i]`
+/// correspond à `suggestions[i]`.
 fn render_suggestions_section(
     suggestions: &[Suggestion],
-    printings: &[Option<ReferencePrinting>],
-    card_to_remove_printings: &[Option<ReferencePrinting>],
+    printings: &[SuggestionPrintings],
 ) -> String {
     debug_assert_eq!(
         suggestions.len(),
         printings.len(),
         "suggestions et printings doivent être alignés positionnellement"
     );
-    debug_assert_eq!(
-        suggestions.len(),
-        card_to_remove_printings.len(),
-        "suggestions et card_to_remove_printings doivent être alignés positionnellement"
-    );
+    let empty = SuggestionPrintings::default();
     let suggestion_items: String = suggestions
         .iter()
         .enumerate()
         .map(|(i, s)| {
             let name = escape_html(&s.card_name);
-            let printing = printings.get(i).and_then(|p| p.as_ref());
-            let art = render_card_art(&name, printing, "suggestion-art");
-            let card_to_remove_printing = card_to_remove_printings.get(i).and_then(|p| p.as_ref());
-            let card_to_remove =
-                render_card_to_remove(s.card_to_remove.as_ref(), card_to_remove_printing);
+            let resolved = printings.get(i).unwrap_or(&empty);
+            let art = render_card_art(&name, resolved.printing.as_ref(), "suggestion-art");
+            let card_to_remove = render_card_to_remove(
+                s.card_to_remove.as_ref(),
+                resolved.card_to_remove_printing.as_ref(),
+            );
             format!(
                 "<li class=\"suggestion-row\">{art}<span class=\"suggestion-body\"><strong>{name}</strong><p>{}</p>{card_to_remove}</span></li>",
                 escape_html(&s.justification)
@@ -373,8 +381,7 @@ fn trimmed_with_newline(s: String) -> String {
 pub fn render(
     enriched: &EnrichedAnalysis,
     commander_printing: Option<&ReferencePrinting>,
-    suggestion_printings: &[Option<ReferencePrinting>],
-    card_to_remove_printings: &[Option<ReferencePrinting>],
+    suggestion_printings: &[SuggestionPrintings],
 ) -> String {
     let a = &enriched.analysis;
 
@@ -401,7 +408,6 @@ pub fn render(
     let suggestions = trimmed_with_newline(render_suggestions_section(
         &enriched.suggestions,
         suggestion_printings,
-        card_to_remove_printings,
     ));
     let unresolved = render_unresolved_section(&a.unresolved);
 
@@ -486,9 +492,13 @@ mod tests {
         assert_eq!(slugify("Atraxa, Praetors' Voice"), "atraxa-praetors-voice");
     }
 
+    fn no_printings() -> Vec<SuggestionPrintings> {
+        vec![SuggestionPrintings::default()]
+    }
+
     #[test]
     fn renders_all_sections() {
-        let html = render(&sample(), None, &[None], &[None]);
+        let html = render(&sample(), None, &no_printings());
         assert!(html.contains("Atraxa, Praetors&#39; Voice"));
         assert!(html.contains("Solide, manque de ramp"));
         assert!(html.contains("Rampant Growth"));
@@ -499,7 +509,7 @@ mod tests {
 
     #[test]
     fn escapes_untrusted_content() {
-        let html = render(&sample(), None, &[None], &[None]);
+        let html = render(&sample(), None, &no_printings());
         assert!(!html.contains("<script>alert(1)</script>"));
         assert!(html.contains("&lt;script&gt;"));
     }
@@ -509,13 +519,13 @@ mod tests {
     /// évolutions volontaires (Verdict structuré, images Scryfall, ...).
     #[test]
     fn render_output_is_stable_across_the_section_split() {
-        let html = render(&sample(), None, &[None], &[None]);
+        let html = render(&sample(), None, &no_printings());
         assert_eq!(html, include_str!("golden_sample.html"));
     }
 
     #[test]
     fn renders_structured_verdict_sections() {
-        let html = render(&sample(), None, &[None]);
+        let html = render(&sample(), None, &no_printings());
         assert!(html.contains("Points forts"));
         assert!(html.contains("Base de mana solide"));
         assert!(html.contains("Faiblesses"));
@@ -529,7 +539,7 @@ mod tests {
     fn escapes_untrusted_content_in_verdict_lists() {
         let mut enriched = sample();
         enriched.verdict.strengths = vec!["<script>alert(1)</script>".to_string()];
-        let html = render(&enriched, None, &[None]);
+        let html = render(&enriched, None, &no_printings());
         assert!(!html.contains("<script>alert(1)</script>"));
         assert!(html.contains("&lt;script&gt;"));
     }
@@ -538,7 +548,7 @@ mod tests {
     fn renders_aucune_for_empty_verdict_priorities() {
         let mut enriched = sample();
         enriched.verdict.priorities = vec![];
-        let html = render(&enriched, None, &[None]);
+        let html = render(&enriched, None, &no_printings());
         assert!(html.contains("Aucune."));
     }
 
@@ -549,7 +559,7 @@ mod tests {
             set_code: "M15".to_string(),
             number: "4".to_string(),
         };
-        let html = render(&sample(), Some(&printing), &[None], &[None]);
+        let html = render(&sample(), Some(&printing), &no_printings());
         assert!(
             html.contains("https://api.scryfall.com/cards/abc-123?format=image&amp;version=normal")
         );
@@ -558,7 +568,7 @@ mod tests {
 
     #[test]
     fn falls_back_to_name_when_no_reference_printing() {
-        let html = render(&sample(), None, &[None], &[None]);
+        let html = render(&sample(), None, &no_printings());
         assert!(!html.contains("scryfall.com"));
         assert!(html.contains("<h1>Atraxa, Praetors&#39; Voice</h1>"));
     }
@@ -570,7 +580,11 @@ mod tests {
             set_code: "M19".to_string(),
             number: "191".to_string(),
         };
-        let html = render(&sample(), None, &[Some(printing)], &[None]);
+        let printings = vec![SuggestionPrintings {
+            printing: Some(printing),
+            card_to_remove_printing: None,
+        }];
+        let html = render(&sample(), None, &printings);
         assert!(
             html.contains("https://api.scryfall.com/cards/rg-123?format=image&amp;version=normal")
         );
@@ -581,14 +595,14 @@ mod tests {
 
     #[test]
     fn falls_back_to_name_for_a_suggestion_without_reference_printing() {
-        let html = render(&sample(), None, &[None], &[None]);
+        let html = render(&sample(), None, &no_printings());
         assert!(!html.contains("scryfall.com"));
         assert!(html.contains("Rampant Growth"));
     }
 
     #[test]
     fn renders_unchanged_without_a_card_to_remove() {
-        let html = render(&sample(), None, &[None], &[None]);
+        let html = render(&sample(), None, &no_printings());
         assert!(!html.contains("class=\"card-to-remove\""));
     }
 
@@ -601,7 +615,11 @@ mod tests {
             set_code: "M19".to_string(),
             number: "183".to_string(),
         };
-        let html = render(&enriched, None, &[None], &[Some(printing)]);
+        let printings = vec![SuggestionPrintings {
+            printing: None,
+            card_to_remove_printing: Some(printing),
+        }];
+        let html = render(&enriched, None, &printings);
         assert!(html.contains("class=\"card-to-remove\""));
         assert!(html.contains("card-to-remove-art"));
         assert!(html.contains("Llanowar Elves"));
@@ -616,7 +634,7 @@ mod tests {
     fn escapes_untrusted_content_in_card_to_remove_name() {
         let mut enriched = sample();
         enriched.suggestions[0].card_to_remove = Some("<script>alert(1)</script>".to_string());
-        let html = render(&enriched, None, &[None], &[None]);
+        let html = render(&enriched, None, &no_printings());
         assert!(!html.contains("<script>alert(1)</script>"));
         assert!(html.contains("&lt;script&gt;"));
     }
