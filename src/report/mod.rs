@@ -280,6 +280,11 @@ fn render_suggestions_section(
     suggestions: &[Suggestion],
     printings: &[Option<ReferencePrinting>],
 ) -> String {
+    debug_assert_eq!(
+        suggestions.len(),
+        printings.len(),
+        "suggestions et printings doivent être alignés positionnellement"
+    );
     let suggestion_items: String = suggestions
         .iter()
         .enumerate()
@@ -450,7 +455,7 @@ mod tests {
 
     #[test]
     fn renders_all_sections() {
-        let html = render(&sample(), None, &[]);
+        let html = render(&sample(), None, &[None]);
         assert!(html.contains("Atraxa, Praetors&#39; Voice"));
         assert!(html.contains("Solide, manque de ramp"));
         assert!(html.contains("Rampant Growth"));
@@ -461,7 +466,7 @@ mod tests {
 
     #[test]
     fn escapes_untrusted_content() {
-        let html = render(&sample(), None, &[]);
+        let html = render(&sample(), None, &[None]);
         assert!(!html.contains("<script>alert(1)</script>"));
         assert!(html.contains("&lt;script&gt;"));
     }
@@ -471,13 +476,13 @@ mod tests {
     /// évolutions volontaires (Verdict structuré, images Scryfall, ...).
     #[test]
     fn render_output_is_stable_across_the_section_split() {
-        let html = render(&sample(), None, &[]);
+        let html = render(&sample(), None, &[None]);
         assert_eq!(html, include_str!("golden_sample.html"));
     }
 
     #[test]
     fn renders_structured_verdict_sections() {
-        let html = render(&sample(), None);
+        let html = render(&sample(), None, &[None]);
         assert!(html.contains("Points forts"));
         assert!(html.contains("Base de mana solide"));
         assert!(html.contains("Faiblesses"));
@@ -491,7 +496,7 @@ mod tests {
     fn escapes_untrusted_content_in_verdict_lists() {
         let mut enriched = sample();
         enriched.verdict.strengths = vec!["<script>alert(1)</script>".to_string()];
-        let html = render(&enriched, None);
+        let html = render(&enriched, None, &[None]);
         assert!(!html.contains("<script>alert(1)</script>"));
         assert!(html.contains("&lt;script&gt;"));
     }
@@ -500,7 +505,7 @@ mod tests {
     fn renders_aucune_for_empty_verdict_priorities() {
         let mut enriched = sample();
         enriched.verdict.priorities = vec![];
-        let html = render(&enriched, None);
+        let html = render(&enriched, None, &[None]);
         assert!(html.contains("Aucune."));
     }
 
@@ -511,7 +516,7 @@ mod tests {
             set_code: "M15".to_string(),
             number: "4".to_string(),
         };
-        let html = render(&sample(), Some(&printing), &[]);
+        let html = render(&sample(), Some(&printing), &[None]);
         assert!(
             html.contains("https://api.scryfall.com/cards/abc-123?format=image&amp;version=normal")
         );
@@ -520,7 +525,7 @@ mod tests {
 
     #[test]
     fn falls_back_to_name_when_no_reference_printing() {
-        let html = render(&sample(), None, &[]);
+        let html = render(&sample(), None, &[None]);
         assert!(!html.contains("scryfall.com"));
         assert!(html.contains("<h1>Atraxa, Praetors&#39; Voice</h1>"));
     }
@@ -545,15 +550,6 @@ mod tests {
     fn falls_back_to_name_for_a_suggestion_without_reference_printing() {
         let html = render(&sample(), None, &[None]);
         assert!(!html.contains("scryfall.com"));
-        assert!(html.contains("Rampant Growth"));
-    }
-
-    #[test]
-    fn tolerates_a_shorter_printings_slice_than_suggestions() {
-        // Ne doit pas paniquer si la liste des Impressions résolues est plus
-        // courte que celle des Suggestions (garde-fou, ne devrait pas
-        // arriver en usage normal).
-        let html = render(&sample(), None, &[]);
         assert!(html.contains("Rampant Growth"));
     }
 }
