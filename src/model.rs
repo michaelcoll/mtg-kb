@@ -31,6 +31,15 @@ pub struct SetInfo {
     pub total_set_size: Option<i64>,
 }
 
+/// L'Impression de référence d'une Carte (voir CONTEXT.md) : celle utilisée
+/// pour illustrer la Carte dans le Rapport d'analyse.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ReferencePrinting {
+    pub scryfall_id: String,
+    pub set_code: String,
+    pub number: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Ruling {
     pub date: String,
