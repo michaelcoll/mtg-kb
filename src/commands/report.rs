@@ -6,6 +6,7 @@ use crate::data_dir::cards_db_path;
 use crate::db::cards::CardsDb;
 use crate::model::EnrichedAnalysis;
 use crate::report;
+use crate::report::SuggestionPrintings;
 
 const REPORTS_DIR: &str = "reports";
 
@@ -35,14 +36,16 @@ pub fn run(json_path: &str) -> Result<()> {
     let suggestion_printings = enriched
         .suggestions
         .iter()
-        .map(|s| cards_db.reference_printing(&s.card_name))
-        .collect::<Result<Vec<_>>>()?;
-    let card_to_remove_printings = enriched
-        .suggestions
-        .iter()
-        .map(|s| match &s.card_to_remove {
-            Some(name) => cards_db.reference_printing(name),
-            None => Ok(None),
+        .map(|s| {
+            let printing = cards_db.reference_printing(&s.card_name)?;
+            let card_to_remove_printing = match &s.card_to_remove {
+                Some(name) => cards_db.reference_printing(name)?,
+                None => None,
+            };
+            Ok(SuggestionPrintings {
+                printing,
+                card_to_remove_printing,
+            })
         })
         .collect::<Result<Vec<_>>>()?;
 
@@ -50,7 +53,6 @@ pub fn run(json_path: &str) -> Result<()> {
         &enriched,
         commander_printing.as_ref(),
         &suggestion_printings,
-        &card_to_remove_printings,
     );
 
     let dir = PathBuf::from(REPORTS_DIR);
