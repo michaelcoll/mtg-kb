@@ -352,6 +352,10 @@ mod tests {
                 'no-scryfall', 'Obscure Test Card', NULL, 0.0, 'Land', 'Land', NULL, NULL,
                 NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'NST', '1', 'paper', 0, 0, 0
             );
+            INSERT INTO cards VALUES (
+                'oversized-only', 'Oversized Test Card', NULL, 0.0, 'Land', 'Land', NULL, NULL,
+                NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'OSIZ', '1', 'paper', 0, 1, 0
+            );
 
             INSERT INTO cardLegalities VALUES ('sol-lea', 'Legal', 'Legal');
             INSERT INTO cardLegalities VALUES ('sol-c21', 'Legal', 'Legal');
@@ -364,11 +368,13 @@ mod tests {
             INSERT INTO cardIdentifiers VALUES ('sol-lea', 'scryfall-sol-lea');
             INSERT INTO cardIdentifiers VALUES ('sol-c21', 'scryfall-sol-c21');
             INSERT INTO cardIdentifiers VALUES ('promo-only', 'scryfall-promo-only');
+            INSERT INTO cardIdentifiers VALUES ('oversized-only', 'scryfall-oversized-only');
 
             INSERT INTO sets VALUES ('LEA', 'Limited Edition Alpha', '1993-08-05', 'core', 'Core Set', 295, 295);
             INSERT INTO sets VALUES ('C21', 'Commander 2021', '2021-04-23', 'commander', NULL, 81, 81);
             INSERT INTO sets VALUES ('PPRO', 'Promo Pack', '2020-01-01', 'promo', NULL, NULL, NULL);
             INSERT INTO sets VALUES ('NST', 'No Scryfall Test', '2020-01-01', 'promo', NULL, NULL, NULL);
+            INSERT INTO sets VALUES ('OSIZ', 'Oversized Test', '2020-01-01', 'promo', NULL, NULL, NULL);
             "#,
         )
         .unwrap();
@@ -572,6 +578,18 @@ mod tests {
             .expect("printing found");
         assert_eq!(printing.set_code, "PPRO");
         assert_eq!(printing.scryfall_id, "scryfall-promo-only");
+    }
+
+    #[test]
+    fn reference_printing_falls_back_to_oversized_when_that_is_all_there_is() {
+        let (_dir, path) = fixture_db();
+        let db = CardsDb::open(&path).unwrap();
+        let printing = db
+            .reference_printing("Oversized Test Card")
+            .unwrap()
+            .expect("printing found");
+        assert_eq!(printing.set_code, "OSIZ");
+        assert_eq!(printing.scryfall_id, "scryfall-oversized-only");
     }
 
     #[test]
