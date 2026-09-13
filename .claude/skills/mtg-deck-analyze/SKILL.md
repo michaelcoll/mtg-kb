@@ -28,23 +28,29 @@ déterministe, Claude interprète et juge.
    d'actions d'amélioration, la plus importante en premier. Choisis les
    `suggestions` parmi `candidates` (pas forcément tous : retiens celles
    qui comblent réellement un Point faible ou renforcent une Synergie),
-   chacune avec une `justification` en une phrase. Écris un JSON = celui
-   de `kb analyze`, avec ces deux champs `verdict` et `suggestions`
-   ajoutés au niveau racine (format `[{"card_name": "...", "justification": "..."}]`
-   pour `suggestions`). Sauvegarde ce JSON enrichi dans un fichier
+   chacune avec une `justification` en une phrase et, si pertinent, une
+   Carte à retirer : une Carte du Deck que la Suggestion propose de
+   remplacer (`card_to_remove`, facultatif). Écris un JSON = celui de
+   `kb analyze`, avec ces deux champs `verdict` et `suggestions` ajoutés
+   au niveau racine (format
+   `[{"card_name": "...", "justification": "...", "card_to_remove": "..."}]`
+   pour `suggestions`, `card_to_remove` omis ou `null` si la Suggestion
+   n'en propose pas). Sauvegarde ce JSON enrichi dans un fichier
    temporaire.
 
 3. **`kb report <json enrichi>`** — valide chaque Suggestion (existe,
    légale en Commander, dans l'Identité de couleur du Commandant, absente
-   du Deck) puis génère le Rapport d'analyse HTML autonome dans
+   du Deck, et sa Carte à retirer si renseignée fait partie du Deck) puis
+   génère le Rapport d'analyse HTML autonome dans
    `reports/<commandant>-<date>.html` : Verdict (Résumé, Points forts,
    Faiblesses, Priorités), courbe, base de mana, Rôles, Points faibles,
-   Synergies, Suggestions (avec justification), Cartes non résolues. Un
-   `verdict` en chaîne de texte (ancien format) est rejeté avec une
-   erreur claire — pas de rétrocompatibilité. Si une Suggestion viole
-   une de ces contraintes, `kb report` échoue en nommant la Carte et la
-   règle violée, sans écrire de rapport : corrige les `suggestions` du
-   JSON enrichi et relance, ne contourne pas l'échec.
+   Synergies, Suggestions (avec justification et, le cas échéant, Carte
+   à retirer affichée en plus petit avec son image), Cartes non
+   résolues. Un `verdict` en chaîne de texte (ancien format) est rejeté
+   avec une erreur claire — pas de rétrocompatibilité. Si une Suggestion
+   viole une de ces contraintes, `kb report` échoue en nommant la Carte
+   et la règle violée, sans écrire de rapport : corrige les
+   `suggestions` du JSON enrichi et relance, ne contourne pas l'échec.
 
 ## Points d'attention
 

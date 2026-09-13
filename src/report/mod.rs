@@ -101,8 +101,12 @@ fn render_head(commander_name: &str) -> String {
   .suggestion-art {{ flex: none; display: block; }}
   .suggestion-art img {{ display: block; width: 60px; border-radius: 6px; border: 1px solid var(--border); }}
   .suggestion-body {{ flex: 1 1 auto; min-width: 0; }}
+  .card-to-remove {{ display: flex; align-items: center; gap: 0.4rem; margin-top: 0.4rem; font-size: 0.85rem; }}
+  .card-to-remove-art {{ flex: none; display: block; }}
+  .card-to-remove-art img {{ display: block; width: 32px; border-radius: 4px; border: 1px solid var(--border); }}
   @media (max-width: 480px) {{
     .suggestion-art img {{ width: 44px; }}
+    .card-to-remove-art img {{ width: 26px; }}
   }}
 </style>
 </head>
@@ -276,14 +280,37 @@ fn render_synergies_section(synergies: &[Synergy]) -> String {
 /// Chaque Suggestion en ligne : vignette de l'Impression de référence à
 /// gauche (même mécanisme que le portrait du Commandant), nom et
 /// justification à droite. `printings[i]` correspond à `suggestions[i]`.
+/// Bloc « Carte à retirer » (voir CONTEXT.md) : plus petit que la
+/// Suggestion, avec sa propre vignette si une Impression de référence est
+/// connue. Absent du rendu si la Suggestion n'en propose pas.
+fn render_card_to_remove(
+    card_to_remove: Option<&String>,
+    printing: Option<&ReferencePrinting>,
+) -> String {
+    let Some(card_to_remove) = card_to_remove else {
+        return String::new();
+    };
+    let name = escape_html(card_to_remove);
+    let art = render_card_art(&name, printing, "card-to-remove-art");
+    format!(
+        "<span class=\"card-to-remove\"><span class=\"muted\">Remplace :</span> {art}<span class=\"card-to-remove-name\">{name}</span></span>"
+    )
+}
+
 fn render_suggestions_section(
     suggestions: &[Suggestion],
     printings: &[Option<ReferencePrinting>],
+    card_to_remove_printings: &[Option<ReferencePrinting>],
 ) -> String {
     debug_assert_eq!(
         suggestions.len(),
         printings.len(),
         "suggestions et printings doivent être alignés positionnellement"
+    );
+    debug_assert_eq!(
+        suggestions.len(),
+        card_to_remove_printings.len(),
+        "suggestions et card_to_remove_printings doivent être alignés positionnellement"
     );
     let suggestion_items: String = suggestions
         .iter()
@@ -292,8 +319,11 @@ fn render_suggestions_section(
             let name = escape_html(&s.card_name);
             let printing = printings.get(i).and_then(|p| p.as_ref());
             let art = render_card_art(&name, printing, "suggestion-art");
+            let card_to_remove_printing = card_to_remove_printings.get(i).and_then(|p| p.as_ref());
+            let card_to_remove =
+                render_card_to_remove(s.card_to_remove.as_ref(), card_to_remove_printing);
             format!(
-                "<li class=\"suggestion-row\">{art}<span class=\"suggestion-body\"><strong>{name}</strong><p>{}</p></span></li>",
+                "<li class=\"suggestion-row\">{art}<span class=\"suggestion-body\"><strong>{name}</strong><p>{}</p>{card_to_remove}</span></li>",
                 escape_html(&s.justification)
             )
         })
@@ -344,6 +374,7 @@ pub fn render(
     enriched: &EnrichedAnalysis,
     commander_printing: Option<&ReferencePrinting>,
     suggestion_printings: &[Option<ReferencePrinting>],
+    card_to_remove_printings: &[Option<ReferencePrinting>],
 ) -> String {
     let a = &enriched.analysis;
 
@@ -370,6 +401,7 @@ pub fn render(
     let suggestions = trimmed_with_newline(render_suggestions_section(
         &enriched.suggestions,
         suggestion_printings,
+        card_to_remove_printings,
     ));
     let unresolved = render_unresolved_section(&a.unresolved);
 
@@ -444,6 +476,7 @@ mod tests {
             suggestions: vec![Suggestion {
                 card_name: "Rampant Growth".to_string(),
                 justification: "Comble le manque de ramp".to_string(),
+                card_to_remove: None,
             }],
         }
     }
@@ -455,7 +488,7 @@ mod tests {
 
     #[test]
     fn renders_all_sections() {
-        let html = render(&sample(), None, &[None]);
+        let html = render(&sample(), None, &[None], &[None]);
         assert!(html.contains("Atraxa, Praetors&#39; Voice"));
         assert!(html.contains("Solide, manque de ramp"));
         assert!(html.contains("Rampant Growth"));
@@ -466,7 +499,7 @@ mod tests {
 
     #[test]
     fn escapes_untrusted_content() {
-        let html = render(&sample(), None, &[None]);
+        let html = render(&sample(), None, &[None], &[None]);
         assert!(!html.contains("<script>alert(1)</script>"));
         assert!(html.contains("&lt;script&gt;"));
     }
@@ -476,7 +509,7 @@ mod tests {
     /// évolutions volontaires (Verdict structuré, images Scryfall, ...).
     #[test]
     fn render_output_is_stable_across_the_section_split() {
-        let html = render(&sample(), None, &[None]);
+        let html = render(&sample(), None, &[None], &[None]);
         assert_eq!(html, include_str!("golden_sample.html"));
     }
 
@@ -516,7 +549,7 @@ mod tests {
             set_code: "M15".to_string(),
             number: "4".to_string(),
         };
-        let html = render(&sample(), Some(&printing), &[None]);
+        let html = render(&sample(), Some(&printing), &[None], &[None]);
         assert!(
             html.contains("https://api.scryfall.com/cards/abc-123?format=image&amp;version=normal")
         );
@@ -525,7 +558,7 @@ mod tests {
 
     #[test]
     fn falls_back_to_name_when_no_reference_printing() {
-        let html = render(&sample(), None, &[None]);
+        let html = render(&sample(), None, &[None], &[None]);
         assert!(!html.contains("scryfall.com"));
         assert!(html.contains("<h1>Atraxa, Praetors&#39; Voice</h1>"));
     }
@@ -537,7 +570,7 @@ mod tests {
             set_code: "M19".to_string(),
             number: "191".to_string(),
         };
-        let html = render(&sample(), None, &[Some(printing)]);
+        let html = render(&sample(), None, &[Some(printing)], &[None]);
         assert!(
             html.contains("https://api.scryfall.com/cards/rg-123?format=image&amp;version=normal")
         );
@@ -548,8 +581,43 @@ mod tests {
 
     #[test]
     fn falls_back_to_name_for_a_suggestion_without_reference_printing() {
-        let html = render(&sample(), None, &[None]);
+        let html = render(&sample(), None, &[None], &[None]);
         assert!(!html.contains("scryfall.com"));
         assert!(html.contains("Rampant Growth"));
+    }
+
+    #[test]
+    fn renders_unchanged_without_a_card_to_remove() {
+        let html = render(&sample(), None, &[None], &[None]);
+        assert!(!html.contains("class=\"card-to-remove\""));
+    }
+
+    #[test]
+    fn renders_card_to_remove_smaller_with_its_own_image() {
+        let mut enriched = sample();
+        enriched.suggestions[0].card_to_remove = Some("Llanowar Elves".to_string());
+        let printing = ReferencePrinting {
+            scryfall_id: "elves-123".to_string(),
+            set_code: "M19".to_string(),
+            number: "183".to_string(),
+        };
+        let html = render(&enriched, None, &[None], &[Some(printing)]);
+        assert!(html.contains("class=\"card-to-remove\""));
+        assert!(html.contains("card-to-remove-art"));
+        assert!(html.contains("Llanowar Elves"));
+        assert!(
+            html.contains(
+                "https://api.scryfall.com/cards/elves-123?format=image&amp;version=normal"
+            )
+        );
+    }
+
+    #[test]
+    fn escapes_untrusted_content_in_card_to_remove_name() {
+        let mut enriched = sample();
+        enriched.suggestions[0].card_to_remove = Some("<script>alert(1)</script>".to_string());
+        let html = render(&enriched, None, &[None], &[None]);
+        assert!(!html.contains("<script>alert(1)</script>"));
+        assert!(html.contains("&lt;script&gt;"));
     }
 }

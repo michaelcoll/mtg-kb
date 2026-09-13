@@ -140,6 +140,10 @@ pub struct AnalyzeResult {
 pub struct Suggestion {
     pub card_name: String,
     pub justification: String,
+    /// Carte à retirer (voir CONTEXT.md) : facultative, une Carte du Deck
+    /// que cette Suggestion propose de remplacer.
+    #[serde(default)]
+    pub card_to_remove: Option<String>,
 }
 
 /// L'appréciation d'ensemble d'un Deck (voir CONTEXT.md) : Résumé, Points

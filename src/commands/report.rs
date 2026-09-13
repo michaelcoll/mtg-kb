@@ -37,11 +37,20 @@ pub fn run(json_path: &str) -> Result<()> {
         .iter()
         .map(|s| cards_db.reference_printing(&s.card_name))
         .collect::<Result<Vec<_>>>()?;
+    let card_to_remove_printings = enriched
+        .suggestions
+        .iter()
+        .map(|s| match &s.card_to_remove {
+            Some(name) => cards_db.reference_printing(name),
+            None => Ok(None),
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     let html = report::render(
         &enriched,
         commander_printing.as_ref(),
         &suggestion_printings,
+        &card_to_remove_printings,
     );
 
     let dir = PathBuf::from(REPORTS_DIR);
