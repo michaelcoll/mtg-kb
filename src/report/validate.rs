@@ -16,6 +16,9 @@ pub fn validate_suggestions(enriched: &EnrichedAnalysis, cards_db: &CardsDb) -> 
         .collect();
 
     let mut violations = Vec::new();
+    let push = |violations: &mut Vec<String>, name: &str, rule: &str| {
+        violations.push(format!("Suggestion « {name} » : {rule}"));
+    };
 
     for suggestion in &enriched.suggestions {
         let name = suggestion.card_name.as_str();
@@ -23,25 +26,27 @@ pub fn validate_suggestions(enriched: &EnrichedAnalysis, cards_db: &CardsDb) -> 
         let card = match cards_db.card_by_name(name) {
             Ok(Some(card)) => card,
             Ok(None) => {
-                violations.push(format!("Suggestion « {name} » : Carte inconnue."));
+                push(&mut violations, name, "Carte inconnue.");
                 continue;
             }
             Err(e) => {
-                violations.push(format!(
-                    "Suggestion « {name} » : erreur lors de la résolution de la Carte ({e})."
-                ));
+                push(
+                    &mut violations,
+                    name,
+                    &format!("erreur lors de la résolution de la Carte ({e})."),
+                );
                 continue;
             }
         };
 
         match cards_db.is_legal_commander(name) {
             Ok(Some(true)) => {}
-            Ok(_) => violations.push(format!(
-                "Suggestion « {name} » : Carte non légale en Commander."
-            )),
-            Err(e) => violations.push(format!(
-                "Suggestion « {name} » : erreur lors de la vérification de légalité ({e})."
-            )),
+            Ok(_) => push(&mut violations, name, "Carte non légale en Commander."),
+            Err(e) => push(
+                &mut violations,
+                name,
+                &format!("erreur lors de la vérification de légalité ({e})."),
+            ),
         }
 
         if !card
@@ -49,15 +54,15 @@ pub fn validate_suggestions(enriched: &EnrichedAnalysis, cards_db: &CardsDb) -> 
             .iter()
             .all(|color| commander_identity.contains(color))
         {
-            violations.push(format!(
-                "Suggestion « {name} » : hors de l'Identité de couleur du Commandant."
-            ));
+            push(
+                &mut violations,
+                name,
+                "hors de l'Identité de couleur du Commandant.",
+            );
         }
 
         if deck_card_names.contains(name) {
-            violations.push(format!(
-                "Suggestion « {name} » : Carte déjà présente dans le Deck."
-            ));
+            push(&mut violations, name, "Carte déjà présente dans le Deck.");
         }
     }
 
@@ -102,11 +107,18 @@ mod tests {
                 'channel', 'Channel', '{G}', 1.0, 'Sorcery', 'Sorcery',
                 NULL, NULL, 'Banned in Commander.', 'G', 'G', NULL, NULL, NULL, NULL, '2ED'
             );
+            INSERT INTO cards VALUES (
+                'atraxa', 'Atraxa, Praetors'' Voice', '{G}{W}{U}{B}', 4.0,
+                'Legendary Creature — Phyrexian Angel Horror', 'Creature',
+                'Phyrexian, Angel, Horror', 'Legendary', 'Flying, vigilance...',
+                'B, G, U, W', 'W, U, B, G', NULL, '4', '4', NULL, 'M15'
+            );
 
             INSERT INTO cardLegalities VALUES ('llanowar', 'Legal', 'Legal');
             INSERT INTO cardLegalities VALUES ('rampant-growth', 'Legal', 'Legal');
             INSERT INTO cardLegalities VALUES ('lightning-bolt', 'Legal', 'Legal');
             INSERT INTO cardLegalities VALUES ('channel', 'Banned', 'Legal');
+            INSERT INTO cardLegalities VALUES ('atraxa', 'Legal', '');
             "#,
         )
         .unwrap();
@@ -250,11 +262,8 @@ mod tests {
             justification: "?".to_string(),
         }]);
         let violations = validate_suggestions(&enriched, &db);
-        assert!(
-            violations
-                .iter()
-                .any(|v| v.contains("déjà présente") || v.contains("inconnue"))
-        );
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].contains("déjà présente"));
     }
 
     #[test]
