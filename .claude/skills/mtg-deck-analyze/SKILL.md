@@ -19,24 +19,32 @@ déterministe, Claude interprète et juge.
    individuellement pendant l'analyse si besoin.
 
 2. **Interprétation et choix** — lis le JSON produit. Rédige un `verdict`
-   (une évaluation en prose du Deck : forces, faiblesses, cohérence de
-   stratégie). Choisis les `suggestions` parmi `candidates` (pas
-   forcément tous : retiens celles qui comblent réellement un Point
-   faible ou renforcent une Synergie), chacune avec une `justification`
-   en une phrase. Écris un JSON = celui de `kb analyze`, avec ces deux
-   champs `verdict` et `suggestions` ajoutés au niveau racine (format
-   `[{"card_name": "...", "justification": "..."}]` pour `suggestions`).
-   Sauvegarde ce JSON enrichi dans un fichier temporaire.
+   structuré (objet, pas une chaîne de texte) :
+   `{"summary": "...", "strengths": ["..."], "weaknesses": ["..."], "priorities": ["..."]}`.
+   `summary` en une ou deux phrases ; `strengths` (Points forts) et
+   `weaknesses` (Faiblesses, une appréciation qualitative — peut
+   s'appuyer sur les Points faibles mesurés par `kb` sans s'y limiter)
+   en listes à puces ; `priorities` (Priorités) en liste ordonnée
+   d'actions d'amélioration, la plus importante en premier. Choisis les
+   `suggestions` parmi `candidates` (pas forcément tous : retiens celles
+   qui comblent réellement un Point faible ou renforcent une Synergie),
+   chacune avec une `justification` en une phrase. Écris un JSON = celui
+   de `kb analyze`, avec ces deux champs `verdict` et `suggestions`
+   ajoutés au niveau racine (format `[{"card_name": "...", "justification": "..."}]`
+   pour `suggestions`). Sauvegarde ce JSON enrichi dans un fichier
+   temporaire.
 
 3. **`kb report <json enrichi>`** — valide chaque Suggestion (existe,
    légale en Commander, dans l'Identité de couleur du Commandant, absente
    du Deck) puis génère le Rapport d'analyse HTML autonome dans
-   `reports/<commandant>-<date>.html` : résumé/verdict, courbe, base de
-   mana, Rôles, Points faibles, Synergies, Suggestions (avec
-   justification), Cartes non résolues. Si une Suggestion viole une de
-   ces contraintes, `kb report` échoue en nommant la Carte et la règle
-   violée, sans écrire de rapport : corrige les `suggestions` du JSON
-   enrichi et relance, ne contourne pas l'échec.
+   `reports/<commandant>-<date>.html` : Verdict (Résumé, Points forts,
+   Faiblesses, Priorités), courbe, base de mana, Rôles, Points faibles,
+   Synergies, Suggestions (avec justification), Cartes non résolues. Un
+   `verdict` en chaîne de texte (ancien format) est rejeté avec une
+   erreur claire — pas de rétrocompatibilité. Si une Suggestion viole
+   une de ces contraintes, `kb report` échoue en nommant la Carte et la
+   règle violée, sans écrire de rapport : corrige les `suggestions` du
+   JSON enrichi et relance, ne contourne pas l'échec.
 
 ## Points d'attention
 
