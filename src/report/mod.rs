@@ -36,90 +36,9 @@ fn list_or_none(items: &[String]) -> String {
     format!("<ul>{lis}</ul>")
 }
 
-/// Rendu HTML autonome (MVP) du Rapport d'analyse à partir du JSON de
-/// `kb analyze` enrichi par Claude (verdict, Suggestions retenues).
-pub fn render(enriched: &EnrichedAnalysis) -> String {
-    let a = &enriched.analysis;
+const SECTION_H2_STYLE: &str = "margin-top:0;border-top:none;padding-top:0;border-bottom:none";
 
-    let max_bucket_count = a
-        .mana_curve
-        .buckets
-        .iter()
-        .map(|b| b.count)
-        .max()
-        .unwrap_or(1);
-    let curve_bars: String = a
-        .mana_curve
-        .buckets
-        .iter()
-        .map(|b| {
-            let width = (b.count as f64 / max_bucket_count.max(1) as f64 * 100.0).round();
-            let label = if b.mana_value >= 7 {
-                "7+".to_string()
-            } else {
-                b.mana_value.to_string()
-            };
-            format!(
-                "<div class=\"bar-row\"><span class=\"bar-label\">{label}</span>\
-                 <div class=\"bar-track\"><div class=\"bar-fill\" style=\"width:{width}%\"></div></div>\
-                 <span class=\"bar-count\">{}</span></div>",
-                b.count
-            )
-        })
-        .collect();
-
-    let sources_rows: String = a
-        .mana_base
-        .sources_by_color
-        .iter()
-        .map(|(color, count)| {
-            let demand = a.mana_base.symbols_by_color.get(color).unwrap_or(&0);
-            format!("<tr><td>{color}</td><td>{count}</td><td>{demand}</td></tr>")
-        })
-        .collect();
-
-    let role_rows: String = a
-        .role_counts
-        .iter()
-        .map(|(role, count)| format!("<tr><td>{}</td><td>{count}</td></tr>", escape_html(role)))
-        .collect();
-
-    let synergy_items: String = a
-        .synergies
-        .iter()
-        .map(|s| {
-            format!(
-                "<li><strong>{}</strong> — {}</li>",
-                escape_html(&s.theme),
-                escape_html(&s.cards.join(", "))
-            )
-        })
-        .collect();
-
-    let suggestion_items: String = enriched
-        .suggestions
-        .iter()
-        .map(|s| {
-            format!(
-                "<li><strong>{}</strong><p>{}</p></li>",
-                escape_html(&s.card_name),
-                escape_html(&s.justification)
-            )
-        })
-        .collect();
-
-    let unresolved_items: String = a
-        .unresolved
-        .iter()
-        .map(|u| format!("<li>{} x{}</li>", escape_html(&u.name), u.quantity))
-        .collect();
-
-    let verdict_badge = if a.construction_errors.is_empty() {
-        "<span class=\"badge badge-ok\">Deck valide</span>"
-    } else {
-        "<span class=\"badge badge-error\">Erreurs de construction</span>"
-    };
-
+fn render_head(commander_name: &str) -> String {
     format!(
         r#"<!doctype html>
 <html lang="fr">
@@ -158,79 +77,224 @@ pub fn render(enriched: &EnrichedAnalysis) -> String {
   .stat strong {{ display: block; font-size: 1.4rem; }}
 </style>
 </head>
-<body>
-<main>
-  <h1>{commander_name}</h1>
-  <p class="muted">{card_count} cartes {verdict_badge}</p>
+"#
+    )
+}
 
-  <section>
-    <h2 style="margin-top:0;border-top:none;padding-top:0;border-bottom:none">Verdict</h2>
+fn render_header_section(commander_name: &str, card_count: u32, verdict_badge: &str) -> String {
+    format!(
+        r#"<h1>{commander_name}</h1>
+  <p class="muted">{card_count} cartes {verdict_badge}</p>
+"#
+    )
+}
+
+fn render_verdict_section(verdict: &str) -> String {
+    format!(
+        r#"  <section>
+    <h2 style="{SECTION_H2_STYLE}">Verdict</h2>
     <p>{verdict}</p>
   </section>
+"#
+    )
+}
 
-  <section>
-    <h2 style="margin-top:0;border-top:none;padding-top:0;border-bottom:none">Courbe de mana</h2>
+fn render_mana_curve_section(curve: &crate::model::ManaCurve) -> String {
+    let max_bucket_count = curve.buckets.iter().map(|b| b.count).max().unwrap_or(1);
+    let curve_bars: String = curve
+        .buckets
+        .iter()
+        .map(|b| {
+            let width = (b.count as f64 / max_bucket_count.max(1) as f64 * 100.0).round();
+            let label = if b.mana_value >= 7 {
+                "7+".to_string()
+            } else {
+                b.mana_value.to_string()
+            };
+            format!(
+                "<div class=\"bar-row\"><span class=\"bar-label\">{label}</span>\
+                 <div class=\"bar-track\"><div class=\"bar-fill\" style=\"width:{width}%\"></div></div>\
+                 <span class=\"bar-count\">{}</span></div>",
+                b.count
+            )
+        })
+        .collect();
+    let avg_mv = curve.average_mana_value;
+
+    format!(
+        r#"  <section>
+    <h2 style="{SECTION_H2_STYLE}">Courbe de mana</h2>
     <p class="stat"><strong>{avg_mv}</strong><span class="muted">mana value moyenne (hors terrains)</span></p>
     {curve_bars}
   </section>
+"#
+    )
+}
 
-  <section>
-    <h2 style="margin-top:0;border-top:none;padding-top:0;border-bottom:none">Base de mana</h2>
+fn render_mana_base_section(mana_base: &crate::model::ManaBase) -> String {
+    let sources_rows: String = mana_base
+        .sources_by_color
+        .iter()
+        .map(|(color, count)| {
+            let demand = mana_base.symbols_by_color.get(color).unwrap_or(&0);
+            format!("<tr><td>{color}</td><td>{count}</td><td>{demand}</td></tr>")
+        })
+        .collect();
+    let land_count = mana_base.land_count;
+
+    format!(
+        r#"  <section>
+    <h2 style="{SECTION_H2_STYLE}">Base de mana</h2>
     <p class="stat"><strong>{land_count}</strong><span class="muted">terrains</span></p>
     <table>
       <thead><tr><th>Couleur</th><th>Sources</th><th>Symboles demandés</th></tr></thead>
       <tbody>{sources_rows}</tbody>
     </table>
   </section>
+"#
+    )
+}
 
-  <section>
-    <h2 style="margin-top:0;border-top:none;padding-top:0;border-bottom:none">Rôles</h2>
+fn render_roles_section(role_counts: &std::collections::BTreeMap<String, u32>) -> String {
+    let role_rows: String = role_counts
+        .iter()
+        .map(|(role, count)| format!("<tr><td>{}</td><td>{count}</td></tr>", escape_html(role)))
+        .collect();
+
+    format!(
+        r#"  <section>
+    <h2 style="{SECTION_H2_STYLE}">Rôles</h2>
     <table>
       <thead><tr><th>Rôle</th><th>Cartes</th></tr></thead>
       <tbody>{role_rows}</tbody>
     </table>
   </section>
+"#
+    )
+}
 
-  <section>
-    <h2 style="margin-top:0;border-top:none;padding-top:0;border-bottom:none">Points faibles</h2>
+fn render_weaknesses_section(weaknesses: &[String]) -> String {
+    let weaknesses = list_or_none(weaknesses);
+    format!(
+        r#"  <section>
+    <h2 style="{SECTION_H2_STYLE}">Points faibles</h2>
     {weaknesses}
   </section>
+"#
+    )
+}
 
-  <section>
-    <h2 style="margin-top:0;border-top:none;padding-top:0;border-bottom:none">Synergies</h2>
+fn render_synergies_section(synergies: &[crate::model::Synergy]) -> String {
+    let synergy_items: String = synergies
+        .iter()
+        .map(|s| {
+            format!(
+                "<li><strong>{}</strong> — {}</li>",
+                escape_html(&s.theme),
+                escape_html(&s.cards.join(", "))
+            )
+        })
+        .collect();
+
+    format!(
+        r#"  <section>
+    <h2 style="{SECTION_H2_STYLE}">Synergies</h2>
     <ul>{synergy_items}</ul>
   </section>
+"#
+    )
+}
 
-  <section>
-    <h2 style="margin-top:0;border-top:none;padding-top:0;border-bottom:none">Suggestions</h2>
+fn render_suggestions_section(suggestions: &[crate::model::Suggestion]) -> String {
+    let suggestion_items: String = suggestions
+        .iter()
+        .map(|s| {
+            format!(
+                "<li><strong>{}</strong><p>{}</p></li>",
+                escape_html(&s.card_name),
+                escape_html(&s.justification)
+            )
+        })
+        .collect();
+
+    format!(
+        r#"  <section>
+    <h2 style="{SECTION_H2_STYLE}">Suggestions</h2>
     <ul>{suggestion_items}</ul>
   </section>
+"#
+    )
+}
 
-  <section>
-    <h2 style="margin-top:0;border-top:none;padding-top:0;border-bottom:none">Cartes non résolues</h2>
+fn render_unresolved_section(unresolved: &[crate::model::UnresolvedLine]) -> String {
+    let unresolved_items: String = unresolved
+        .iter()
+        .map(|u| format!("<li>{} x{}</li>", escape_html(&u.name), u.quantity))
+        .collect();
+    let unresolved = if unresolved_items.is_empty() {
+        "<p class=\"muted\">Aucune.</p>".to_string()
+    } else {
+        format!("<ul>{unresolved_items}</ul>")
+    };
+
+    format!(
+        r#"  <section>
+    <h2 style="{SECTION_H2_STYLE}">Cartes non résolues</h2>
     {unresolved}
   </section>
-</main>
-</body>
-</html>
-"#,
-        commander_name = escape_html(&a.commander.name),
-        card_count = a.card_count,
-        verdict_badge = verdict_badge,
-        verdict = escape_html(&enriched.verdict),
-        avg_mv = a.mana_curve.average_mana_value,
-        curve_bars = curve_bars,
-        land_count = a.mana_base.land_count,
-        sources_rows = sources_rows,
-        role_rows = role_rows,
-        weaknesses = list_or_none(&a.weaknesses),
-        synergy_items = synergy_items,
-        suggestion_items = suggestion_items,
-        unresolved = if unresolved_items.is_empty() {
-            "<p class=\"muted\">Aucune.</p>".to_string()
-        } else {
-            format!("<ul>{unresolved_items}</ul>")
-        },
+"#
+    )
+}
+
+/// Rendu HTML autonome (MVP) du Rapport d'analyse à partir du JSON de
+/// `kb analyze` enrichi par Claude (verdict, Suggestions retenues).
+///
+/// Chaque section est rendue par sa propre fonction (issue #21) pour que les
+/// évolutions futures (Verdict structuré, images Scryfall, ...) touchent une
+/// seule section sans toucher aux autres.
+pub fn render(enriched: &EnrichedAnalysis) -> String {
+    let a = &enriched.analysis;
+
+    let verdict_badge = if a.construction_errors.is_empty() {
+        "<span class=\"badge badge-ok\">Deck valide</span>"
+    } else {
+        "<span class=\"badge badge-error\">Erreurs de construction</span>"
+    };
+
+    let head = render_head(&escape_html(&a.commander.name));
+    let header =
+        render_header_section(&escape_html(&a.commander.name), a.card_count, verdict_badge)
+            .trim_end()
+            .to_string();
+    let verdict = render_verdict_section(&escape_html(&enriched.verdict))
+        .trim_end()
+        .to_string()
+        + "\n";
+    let mana_curve = render_mana_curve_section(&a.mana_curve)
+        .trim_end()
+        .to_string()
+        + "\n";
+    let mana_base = render_mana_base_section(&a.mana_base)
+        .trim_end()
+        .to_string()
+        + "\n";
+    let roles = render_roles_section(&a.role_counts).trim_end().to_string() + "\n";
+    let weaknesses = render_weaknesses_section(&a.weaknesses)
+        .trim_end()
+        .to_string()
+        + "\n";
+    let synergies = render_synergies_section(&a.synergies)
+        .trim_end()
+        .to_string()
+        + "\n";
+    let suggestions = render_suggestions_section(&enriched.suggestions)
+        .trim_end()
+        .to_string()
+        + "\n";
+    let unresolved = render_unresolved_section(&a.unresolved);
+
+    format!(
+        "{head}<body>\n<main>\n  {header}\n\n{verdict}\n{mana_curve}\n{mana_base}\n{roles}\n{weaknesses}\n{synergies}\n{suggestions}\n{unresolved}</main>\n</body>\n</html>\n"
     )
 }
 
@@ -240,7 +304,7 @@ mod tests {
     use crate::model::*;
     use std::collections::BTreeMap;
 
-    fn sample() -> EnrichedAnalysis {
+    pub(super) fn sample() -> EnrichedAnalysis {
         EnrichedAnalysis {
             analysis: AnalyzeResult {
                 commander: Card {
@@ -320,5 +384,13 @@ mod tests {
         let html = render(&sample());
         assert!(!html.contains("<script>alert(1)</script>"));
         assert!(html.contains("&lt;script&gt;"));
+    }
+
+    /// Non-régression du découpage par section (issue #21) : le HTML produit
+    /// pour une analyse de référence ne doit pas changer d'un octet.
+    #[test]
+    fn render_output_is_stable_across_the_section_split() {
+        let html = render(&sample());
+        assert_eq!(html, include_str!("golden_sample.html"));
     }
 }
