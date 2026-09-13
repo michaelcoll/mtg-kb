@@ -96,17 +96,26 @@ fn render_head(commander_name: &str) -> String {
   .stat strong {{ display: block; font-size: 1.4rem; }}
   .commander-art {{ display: block; float: left; margin: 0 1rem 0.5rem 0; }}
   .commander-art img {{ display: block; width: 180px; border-radius: 12px; border: 1px solid var(--border); }}
+  .suggestion-list {{ list-style: none; padding: 0; }}
+  .suggestion-row {{ display: flex; align-items: flex-start; gap: 0.75rem; }}
+  .suggestion-art {{ flex: none; display: block; }}
+  .suggestion-art img {{ display: block; width: 60px; border-radius: 6px; border: 1px solid var(--border); }}
+  .suggestion-body {{ flex: 1 1 auto; min-width: 0; }}
+  @media (max-width: 480px) {{
+    .suggestion-art img {{ width: 44px; }}
+  }}
 </style>
 </head>
 "#
     )
 }
 
-/// Portrait du Commandant depuis l'endpoint officiel Scryfall, avec lien
-/// vers la page de l'Impression de référence et repli sur le nom si
-/// l'image ne charge pas (hors ligne) ou si aucune Impression de référence
-/// n'a de `scryfallId`.
-fn render_commander_art(commander_name: &str, printing: Option<&ReferencePrinting>) -> String {
+/// Portrait d'une Carte depuis l'endpoint officiel Scryfall, avec lien vers
+/// la page de l'Impression de référence et repli sur le nom si l'image ne
+/// charge pas (hors ligne) ou si aucune Impression de référence n'a de
+/// `scryfallId`. `css_class` distingue la taille (portrait du Commandant en
+/// en-tête, vignette dans une Suggestion).
+fn render_card_art(name: &str, printing: Option<&ReferencePrinting>, css_class: &str) -> String {
     let Some(printing) = printing else {
         return String::new();
     };
@@ -114,11 +123,11 @@ fn render_commander_art(commander_name: &str, printing: Option<&ReferencePrintin
     let set_code = printing.set_code.to_lowercase();
     let number = &printing.number;
     format!(
-        r#"<span class="commander-art">
+        r#"<span class="{css_class}">
     <a href="https://scryfall.com/card/{set_code}/{number}" target="_blank" rel="noopener">
-      <img src="https://api.scryfall.com/cards/{scryfall_id}?format=image&amp;version=normal" alt="{commander_name}" onerror="this.hidden=true;this.nextElementSibling.hidden=false;">
+      <img src="https://api.scryfall.com/cards/{scryfall_id}?format=image&amp;version=normal" alt="{name}" onerror="this.hidden=true;this.nextElementSibling.hidden=false;">
     </a>
-    <span class="commander-art-fallback muted" hidden>{commander_name}</span>
+    <span class="{css_class}-fallback muted" hidden>{name}</span>
   </span>
   "#
     )
@@ -130,7 +139,7 @@ fn render_header_section(
     verdict_badge: &str,
     printing: Option<&ReferencePrinting>,
 ) -> String {
-    let art = render_commander_art(commander_name, printing);
+    let art = render_card_art(commander_name, printing, "commander-art");
     format!(
         r#"{art}<h1>{commander_name}</h1>
   <p class="muted">{card_count} cartes {verdict_badge}</p>
@@ -264,13 +273,22 @@ fn render_synergies_section(synergies: &[Synergy]) -> String {
     )
 }
 
-fn render_suggestions_section(suggestions: &[Suggestion]) -> String {
+/// Chaque Suggestion en ligne : vignette de l'Impression de référence à
+/// gauche (même mécanisme que le portrait du Commandant), nom et
+/// justification à droite. `printings[i]` correspond à `suggestions[i]`.
+fn render_suggestions_section(
+    suggestions: &[Suggestion],
+    printings: &[Option<ReferencePrinting>],
+) -> String {
     let suggestion_items: String = suggestions
         .iter()
-        .map(|s| {
+        .enumerate()
+        .map(|(i, s)| {
+            let name = escape_html(&s.card_name);
+            let printing = printings.get(i).and_then(|p| p.as_ref());
+            let art = render_card_art(&name, printing, "suggestion-art");
             format!(
-                "<li><strong>{}</strong><p>{}</p></li>",
-                escape_html(&s.card_name),
+                "<li class=\"suggestion-row\">{art}<span class=\"suggestion-body\"><strong>{name}</strong><p>{}</p></span></li>",
                 escape_html(&s.justification)
             )
         })
@@ -279,7 +297,7 @@ fn render_suggestions_section(suggestions: &[Suggestion]) -> String {
     format!(
         r#"  <section>
     <h2 style="{SECTION_H2_STYLE}">Suggestions</h2>
-    <ul>{suggestion_items}</ul>
+    <ul class="suggestion-list">{suggestion_items}</ul>
   </section>
 "#
     )
@@ -320,6 +338,7 @@ fn trimmed_with_newline(s: String) -> String {
 pub fn render(
     enriched: &EnrichedAnalysis,
     commander_printing: Option<&ReferencePrinting>,
+    suggestion_printings: &[Option<ReferencePrinting>],
 ) -> String {
     let a = &enriched.analysis;
 
@@ -343,7 +362,10 @@ pub fn render(
     let roles = trimmed_with_newline(render_roles_section(&a.role_counts));
     let weaknesses = trimmed_with_newline(render_weaknesses_section(&a.weaknesses));
     let synergies = trimmed_with_newline(render_synergies_section(&a.synergies));
-    let suggestions = trimmed_with_newline(render_suggestions_section(&enriched.suggestions));
+    let suggestions = trimmed_with_newline(render_suggestions_section(
+        &enriched.suggestions,
+        suggestion_printings,
+    ));
     let unresolved = render_unresolved_section(&a.unresolved);
 
     format!(
@@ -428,7 +450,7 @@ mod tests {
 
     #[test]
     fn renders_all_sections() {
-        let html = render(&sample(), None);
+        let html = render(&sample(), None, &[]);
         assert!(html.contains("Atraxa, Praetors&#39; Voice"));
         assert!(html.contains("Solide, manque de ramp"));
         assert!(html.contains("Rampant Growth"));
@@ -439,7 +461,7 @@ mod tests {
 
     #[test]
     fn escapes_untrusted_content() {
-        let html = render(&sample(), None);
+        let html = render(&sample(), None, &[]);
         assert!(!html.contains("<script>alert(1)</script>"));
         assert!(html.contains("&lt;script&gt;"));
     }
@@ -449,7 +471,7 @@ mod tests {
     /// évolutions volontaires (Verdict structuré, images Scryfall, ...).
     #[test]
     fn render_output_is_stable_across_the_section_split() {
-        let html = render(&sample(), None);
+        let html = render(&sample(), None, &[]);
         assert_eq!(html, include_str!("golden_sample.html"));
     }
 
@@ -489,7 +511,7 @@ mod tests {
             set_code: "M15".to_string(),
             number: "4".to_string(),
         };
-        let html = render(&sample(), Some(&printing));
+        let html = render(&sample(), Some(&printing), &[]);
         assert!(
             html.contains("https://api.scryfall.com/cards/abc-123?format=image&amp;version=normal")
         );
@@ -498,8 +520,40 @@ mod tests {
 
     #[test]
     fn falls_back_to_name_when_no_reference_printing() {
-        let html = render(&sample(), None);
+        let html = render(&sample(), None, &[]);
         assert!(!html.contains("scryfall.com"));
         assert!(html.contains("<h1>Atraxa, Praetors&#39; Voice</h1>"));
+    }
+
+    #[test]
+    fn renders_suggestion_image_with_scryfall_link_when_printing_is_known() {
+        let printing = ReferencePrinting {
+            scryfall_id: "rg-123".to_string(),
+            set_code: "M19".to_string(),
+            number: "191".to_string(),
+        };
+        let html = render(&sample(), None, &[Some(printing)]);
+        assert!(
+            html.contains("https://api.scryfall.com/cards/rg-123?format=image&amp;version=normal")
+        );
+        assert!(html.contains("https://scryfall.com/card/m19/191"));
+        assert!(html.contains("Rampant Growth"));
+        assert!(html.contains("Comble le manque de ramp"));
+    }
+
+    #[test]
+    fn falls_back_to_name_for_a_suggestion_without_reference_printing() {
+        let html = render(&sample(), None, &[None]);
+        assert!(!html.contains("scryfall.com"));
+        assert!(html.contains("Rampant Growth"));
+    }
+
+    #[test]
+    fn tolerates_a_shorter_printings_slice_than_suggestions() {
+        // Ne doit pas paniquer si la liste des Impressions résolues est plus
+        // courte que celle des Suggestions (garde-fou, ne devrait pas
+        // arriver en usage normal).
+        let html = render(&sample(), None, &[]);
+        assert!(html.contains("Rampant Growth"));
     }
 }

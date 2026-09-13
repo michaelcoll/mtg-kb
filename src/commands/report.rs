@@ -32,8 +32,17 @@ pub fn run(json_path: &str) -> Result<()> {
     }
 
     let commander_printing = cards_db.reference_printing(&enriched.analysis.commander.name)?;
+    let suggestion_printings = enriched
+        .suggestions
+        .iter()
+        .map(|s| cards_db.reference_printing(&s.card_name))
+        .collect::<Result<Vec<_>>>()?;
 
-    let html = report::render(&enriched, commander_printing.as_ref());
+    let html = report::render(
+        &enriched,
+        commander_printing.as_ref(),
+        &suggestion_printings,
+    );
 
     let dir = PathBuf::from(REPORTS_DIR);
     std::fs::create_dir_all(&dir)?;
