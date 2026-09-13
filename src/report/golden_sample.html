@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Rapport d'analyse — Atraxa, Praetors&#39; Voice</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --text: #e8eaed; --muted: #9aa0a6;
+    --accent: #7c9cff; --ok: #3ecf8e; --error: #ff6b6b; --border: #2a2e37;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    line-height: 1.5;
+  }
+  main { max-width: 880px; margin: 0 auto; }
+  h1 { font-size: 1.75rem; margin-bottom: 0.25rem; }
+  h2 { font-size: 1.15rem; margin-top: 2.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }
+  .muted { color: var(--muted); }
+  .badge { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.85rem; font-weight: 600; }
+  .badge-ok { background: rgba(62,207,142,0.15); color: var(--ok); }
+  .badge-error { background: rgba(255,107,107,0.15); color: var(--error); }
+  section { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem 1.5rem; margin-top: 1rem; }
+  table { width: 100%; border-collapse: collapse; }
+  td, th { padding: 0.35rem 0.5rem; text-align: left; border-bottom: 1px solid var(--border); }
+  ul { margin: 0; padding-left: 1.25rem; }
+  li { margin-bottom: 0.4rem; }
+  .bar-row { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.4rem; }
+  .bar-label { width: 2rem; text-align: right; color: var(--muted); }
+  .bar-track { flex: 1; background: var(--border); border-radius: 4px; height: 0.9rem; overflow: hidden; }
+  .bar-fill { background: var(--accent); height: 100%; }
+  .bar-count { width: 2rem; color: var(--muted); }
+  .stat { display: inline-block; margin-right: 2rem; }
+  .stat strong { display: block; font-size: 1.4rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Atraxa, Praetors&#39; Voice</h1>
+  <p class="muted">100 cartes <span class="badge badge-ok">Deck valide</span></p>
+
+  <section>
+    <h2 style="margin-top:0;border-top:none;padding-top:0;border-bottom:none">Verdict</h2>
+    <p>Solide, manque de ramp</p>
+  </section>
+
+  <section>
+    <h2 style="margin-top:0;border-top:none;padding-top:0;border-bottom:none">Courbe de mana</h2>
+    <p class="stat"><strong>2.5</strong><span class="muted">mana value moyenne (hors terrains)</span></p>
+    <div class="bar-row"><span class="bar-label">2</span><div class="bar-track"><div class="bar-fill" style="width:100%"></div></div><span class="bar-count">5</span></div>
+  </section>
+
+  <section>
+    <h2 style="margin-top:0;border-top:none;padding-top:0;border-bottom:none">Base de mana</h2>
+    <p class="stat"><strong>37</strong><span class="muted">terrains</span></p>
+    <table>
+      <thead><tr><th>Couleur</th><th>Sources</th><th>Symboles demandés</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2 style="margin-top:0;border-top:none;padding-top:0;border-bottom:none">Rôles</h2>
+    <table>
+      <thead><tr><th>Rôle</th><th>Cartes</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2 style="margin-top:0;border-top:none;padding-top:0;border-bottom:none">Points faibles</h2>
+    <ul><li>Ramp sous-représenté : 3 cartes (&lt; 10)</li></ul>
+  </section>
+
+  <section>
+    <h2 style="margin-top:0;border-top:none;padding-top:0;border-bottom:none">Synergies</h2>
+    <ul><li><strong>tokens</strong> — Krenko, Mob Boss</li></ul>
+  </section>
+
+  <section>
+    <h2 style="margin-top:0;border-top:none;padding-top:0;border-bottom:none">Suggestions</h2>
+    <ul><li><strong>Rampant Growth</strong><p>Comble le manque de ramp</p></li></ul>
+  </section>
+
+  <section>
+    <h2 style="margin-top:0;border-top:none;padding-top:0;border-bottom:none">Cartes non résolues</h2>
+    <ul><li>&lt;script&gt;alert(1)&lt;/script&gt; x1</li></ul>
+  </section>
+</main>
+</body>
+</html>
