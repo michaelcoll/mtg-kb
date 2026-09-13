@@ -64,6 +64,16 @@ pub fn validate_suggestions(enriched: &EnrichedAnalysis, cards_db: &CardsDb) -> 
         if deck_card_names.contains(name) {
             push(&mut violations, name, "Carte déjà présente dans le Deck.");
         }
+
+        if let Some(card_to_remove) = &suggestion.card_to_remove
+            && !deck_card_names.contains(card_to_remove.as_str())
+        {
+            push(
+                &mut violations,
+                name,
+                &format!("Carte à retirer « {card_to_remove} » absente du Deck."),
+            );
+        }
     }
 
     violations
@@ -203,8 +213,34 @@ mod tests {
         let enriched = sample(vec![Suggestion {
             card_name: "Rampant Growth".to_string(),
             justification: "Comble le manque de ramp".to_string(),
+            card_to_remove: None,
         }]);
         assert!(validate_suggestions(&enriched, &db).is_empty());
+    }
+
+    #[test]
+    fn no_violation_when_card_to_remove_is_in_the_deck() {
+        let (_dir, db) = fixture_db();
+        let enriched = sample(vec![Suggestion {
+            card_name: "Rampant Growth".to_string(),
+            justification: "Comble le manque de ramp".to_string(),
+            card_to_remove: Some("Llanowar Elves".to_string()),
+        }]);
+        assert!(validate_suggestions(&enriched, &db).is_empty());
+    }
+
+    #[test]
+    fn card_to_remove_absent_from_deck_is_a_violation() {
+        let (_dir, db) = fixture_db();
+        let enriched = sample(vec![Suggestion {
+            card_name: "Rampant Growth".to_string(),
+            justification: "Comble le manque de ramp".to_string(),
+            card_to_remove: Some("Sol Ring".to_string()),
+        }]);
+        let violations = validate_suggestions(&enriched, &db);
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].contains("Sol Ring"));
+        assert!(violations[0].contains("absente du Deck"));
     }
 
     #[test]
@@ -213,6 +249,7 @@ mod tests {
         let enriched = sample(vec![Suggestion {
             card_name: "Not A Real Card".to_string(),
             justification: "N'existe pas".to_string(),
+            card_to_remove: None,
         }]);
         let violations = validate_suggestions(&enriched, &db);
         assert_eq!(violations.len(), 1);
@@ -226,6 +263,7 @@ mod tests {
         let enriched = sample(vec![Suggestion {
             card_name: "Channel".to_string(),
             justification: "Trop puissante".to_string(),
+            card_to_remove: None,
         }]);
         let violations = validate_suggestions(&enriched, &db);
         assert_eq!(violations.len(), 1);
@@ -239,6 +277,7 @@ mod tests {
         let enriched = sample(vec![Suggestion {
             card_name: "Lightning Bolt".to_string(),
             justification: "Removal".to_string(),
+            card_to_remove: None,
         }]);
         let violations = validate_suggestions(&enriched, &db);
         assert_eq!(violations.len(), 1);
@@ -252,6 +291,7 @@ mod tests {
         let enriched = sample(vec![Suggestion {
             card_name: "Llanowar Elves".to_string(),
             justification: "Ramp".to_string(),
+            card_to_remove: None,
         }]);
         let violations = validate_suggestions(&enriched, &db);
         assert_eq!(violations.len(), 1);
@@ -265,6 +305,7 @@ mod tests {
         let enriched = sample(vec![Suggestion {
             card_name: "Atraxa, Praetors' Voice".to_string(),
             justification: "?".to_string(),
+            card_to_remove: None,
         }]);
         let violations = validate_suggestions(&enriched, &db);
         assert_eq!(violations.len(), 1);
@@ -278,10 +319,12 @@ mod tests {
             Suggestion {
                 card_name: "Not A Real Card".to_string(),
                 justification: "N'existe pas".to_string(),
+                card_to_remove: None,
             },
             Suggestion {
                 card_name: "Lightning Bolt".to_string(),
                 justification: "Removal".to_string(),
+                card_to_remove: None,
             },
         ]);
         let violations = validate_suggestions(&enriched, &db);
