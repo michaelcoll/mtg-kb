@@ -33,10 +33,12 @@ pub fn run(json_path: &str) -> Result<()> {
     }
 
     let commander_printing = cards_db.reference_printing(&enriched.analysis.commander.name)?;
+    let origins = report::origins::compute_origins(&enriched);
     let suggestion_printings = enriched
         .suggestions
         .iter()
-        .map(|s| {
+        .enumerate()
+        .map(|(i, s)| {
             let printing = cards_db.reference_printing(&s.card_name)?;
             let card_to_remove_printing = match &s.card_to_remove {
                 Some(name) => cards_db.reference_printing(name)?,
@@ -45,6 +47,7 @@ pub fn run(json_path: &str) -> Result<()> {
             Ok(SuggestionPrintings {
                 printing,
                 card_to_remove_printing,
+                origins: origins.get(i).cloned().unwrap_or_default(),
             })
         })
         .collect::<Result<Vec<_>>>()?;

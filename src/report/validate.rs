@@ -196,6 +196,11 @@ mod tests {
                 weaknesses: vec![],
                 synergies: vec![],
                 candidates: vec![],
+                edhrec_recommendations: vec![],
+                edhrec_unresolved_names: vec![],
+                recommander_recommendations: vec![],
+                recommander_unresolved_names: vec![],
+                source_errors: vec![],
             },
             verdict: Verdict {
                 summary: "Solide".to_string(),

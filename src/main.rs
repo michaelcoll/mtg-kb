@@ -23,6 +23,7 @@ fn main() {
             min_wipe,
             max_average_mana_value,
             max_high_cost_cards,
+            offline,
         } => commands::analyze::run(
             &source,
             min_lands,
@@ -32,6 +33,7 @@ fn main() {
             min_wipe,
             max_average_mana_value,
             max_high_cost_cards,
+            offline,
         ),
         cli::Command::Report { json_path } => commands::report::run(&json_path),
         cli::Command::Card { name, format } => commands::card::run(&name, format),

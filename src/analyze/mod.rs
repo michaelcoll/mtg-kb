@@ -1,4 +1,5 @@
 pub mod candidates;
+pub mod external;
 pub mod metrics;
 pub mod themes;
 
@@ -147,6 +148,14 @@ pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Resul
         weaknesses,
         synergies,
         candidates,
+        // Sources externes : `analyze::run` reste sans dépendance réseau
+        // (voir ADR 0003) ; remplies ensuite par `commands::analyze`, hors
+        // `--offline`.
+        edhrec_recommendations: Vec::new(),
+        edhrec_unresolved_names: Vec::new(),
+        recommander_recommendations: Vec::new(),
+        recommander_unresolved_names: Vec::new(),
+        source_errors: Vec::new(),
     })
 }
 
@@ -184,7 +193,9 @@ fn aggregate(lines: Vec<DecklistLine>) -> Vec<DecklistLine> {
     merged
 }
 
-fn is_basic_land(card: &crate::model::Card) -> bool {
+/// Une Carte de terrain de base : exclue du singleton, et du `deck` envoyé à
+/// Recommander (voir ADR 0003, "Decklist sans terrains de base").
+pub(crate) fn is_basic_land(card: &crate::model::Card) -> bool {
     card.supertypes.iter().any(|t| t == "Basic") && card.types.iter().any(|t| t == "Land")
 }
 
