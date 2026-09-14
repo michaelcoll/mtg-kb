@@ -29,10 +29,7 @@ pub fn run(
     format: Format,
 ) -> Result<()> {
     let db = CardsDb::open(&cards_db_path())?;
-    let exclude_names = exclude_deck
-        .as_deref()
-        .map(names_in_decklist)
-        .transpose()?;
+    let exclude_names = exclude_deck.as_deref().map(names_in_decklist).transpose()?;
 
     let results = search_cards(
         &db,
@@ -264,16 +261,7 @@ mod tests {
         let (_dir, db) = fixture_db();
         let decklist = "Commander\n1 Doom Blade\n\nDeck\n1 Rampant Growth\n";
         let exclude_names = names_in_decklist_text(decklist);
-        let results = search(
-            &db,
-            None,
-            None,
-            None,
-            &[],
-            &[],
-            Some(exclude_names),
-            50,
-        );
+        let results = search(&db, None, None, None, &[], &[], Some(exclude_names), 50);
         let names: Vec<_> = results.iter().map(|c| c.name.as_str()).collect();
         assert!(!names.contains(&"Doom Blade"), "commander excluded");
         assert!(!names.contains(&"Rampant Growth"), "deck card excluded");
@@ -315,7 +303,10 @@ mod tests {
             },
             vec!["Beast Within", "Doom Blade"]
         );
-        assert!(!names.contains(&"Terminate"), "color identity has R, not in BG");
+        assert!(
+            !names.contains(&"Terminate"),
+            "color identity has R, not in BG"
+        );
         assert!(
             !names.contains(&"Damnation"),
             "wipe, not removal_cible, and mana value 4 > 3"
