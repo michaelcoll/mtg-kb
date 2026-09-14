@@ -42,6 +42,9 @@ pub struct SearchFilters {
     pub color_identity_subset_of: Option<Vec<String>>,
     pub legal_in_format: Option<String>,
     pub mana_value: Option<f64>,
+    /// Nombre maximal de résultats. `0` signifie « sans limite » (tout le
+    /// pool correspondant aux filtres) : utilisé par l'analyse de Candidats,
+    /// qui doit couvrir toute la Base cartes plutôt qu'un top alphabétique.
     pub limit: usize,
 }
 
@@ -151,10 +154,15 @@ impl CardsDb {
             sql.push_str(&conditions.join(" AND "));
         }
         sql.push_str(" ORDER BY c.name");
-        // Sur-échantillonne avant le filtre d'Identité de couleur, appliqué
-        // en Rust, pour ne pas tronquer prématurément les résultats.
-        let fetch_cap = filters.limit.saturating_mul(20).max(500);
-        sql.push_str(&format!(" LIMIT {fetch_cap}"));
+        // `limit == 0` signifie « sans limite » : pas de LIMIT SQL, pas de
+        // troncature côté Rust (utilisé pour couvrir tout le pool de
+        // Candidats, cf. CONTEXT.md). Sinon, sur-échantillonne avant le
+        // filtre d'Identité de couleur, appliqué en Rust, pour ne pas
+        // tronquer prématurément les résultats.
+        if filters.limit > 0 {
+            let fetch_cap = filters.limit.saturating_mul(20).max(500);
+            sql.push_str(&format!(" LIMIT {fetch_cap}"));
+        }
 
         let mut stmt = self.conn.prepare(&sql)?;
         let param_refs: Vec<&dyn rusqlite::types::ToSql> =
@@ -177,7 +185,7 @@ impl CardsDb {
                 continue;
             }
             results.push(card);
-            if results.len() >= filters.limit {
+            if filters.limit > 0 && results.len() >= filters.limit {
                 break;
             }
         }
@@ -494,6 +502,26 @@ mod tests {
         assert!(names.contains(&"Sol Ring"));
         assert!(names.contains(&"Llanowar Elves"));
         assert!(!names.contains(&"Atraxa, Praetors' Voice"));
+    }
+
+    #[test]
+    fn search_with_zero_limit_returns_the_whole_matching_pool() {
+        let (_dir, path) = fixture_db();
+        let db = CardsDb::open(&path).unwrap();
+        let results = db
+            .search(&SearchFilters {
+                legal_in_format: Some("commander".to_string()),
+                limit: 0,
+                ..Default::default()
+            })
+            .unwrap();
+        // Toutes les Cartes légales Commander de la fixture, sans plafond ni
+        // troncature : Sol Ring (dédoublonné), Atraxa, Llanowar Elves.
+        let names: Vec<_> = results.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"Sol Ring"));
+        assert!(names.contains(&"Atraxa, Praetors' Voice"));
+        assert!(names.contains(&"Llanowar Elves"));
+        assert_eq!(results.len(), 3);
     }
 
     #[test]

@@ -12,6 +12,11 @@ use crate::model::{AnalyzeResult, ResolvedCard, Synergy, UnresolvedLine};
 
 const REQUIRED_DECK_SIZE: u32 = 100;
 
+/// Nombre minimal de Cartes du Deck devant porter un Thème pour qu'il soit
+/// un Thème majeur (voir CONTEXT.md) : un Thème tribal accidentel porté par
+/// 2-3 Cartes ne doit pas générer de Candidats.
+const MAJOR_THEME_MIN_CARDS: u32 = 8;
+
 /// Résout et valide une Decklist en un AnalyzeResult. Erreur explicite
 /// uniquement pour l'ambiguïté de Commandant (0 ou 2+) : tout le reste
 /// (Cartes non résolues, écarts de validation) est reporté dans le résultat
@@ -107,17 +112,26 @@ pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Resul
     let synergies = find_synergies(&cards);
 
     let deck_names: HashSet<String> = cards.iter().map(|c| c.card.name.clone()).collect();
-    let mut deck_themes: HashSet<String> = cards
-        .iter()
-        .flat_map(|c| c.themes.iter().cloned())
+    let mut theme_counts: BTreeMap<String, u32> = BTreeMap::new();
+    for resolved in &cards {
+        for theme in &resolved.themes {
+            *theme_counts.entry(theme.clone()).or_insert(0) += resolved.quantity;
+        }
+    }
+    for theme in themes::detect_themes(&commander) {
+        *theme_counts.entry(theme).or_insert(0) += 1;
+    }
+    let major_themes: HashSet<String> = theme_counts
+        .into_iter()
+        .filter(|(_, count)| *count >= MAJOR_THEME_MIN_CARDS)
+        .map(|(theme, _)| theme)
         .collect();
-    deck_themes.extend(themes::detect_themes(&commander));
     let weak_roles = metrics::weak_role_names(&role_counts, thresholds);
     let candidates = candidates::find_candidates(
         db,
         &commander.color_identity,
         &deck_names,
-        &deck_themes,
+        &major_themes,
         &weak_roles,
     )?;
 
@@ -344,5 +358,92 @@ mod tests {
         assert_eq!(result.mana_base.land_count, 98);
         assert_eq!(result.role_counts.get("terrain"), Some(&98));
         assert_eq!(result.role_counts.get("ramp"), Some(&1));
+    }
+
+    /// Base cartes dédiée aux tests de seuil de Thème majeur : un Commandant
+    /// (Atraxa, GWUB) et un pool de Cartes tribales Goblin (dans l'Identité
+    /// de couleur, légales Commander, absentes du Deck), pour vérifier que
+    /// "tribal:Goblin" ne génère de Candidat que lorsqu'il est porté par au
+    /// moins `MAJOR_THEME_MIN_CARDS` Cartes du Deck.
+    fn fixture_db_with_goblin_pool(goblins_in_deck: u32) -> (tempfile::TempDir, CardsDb, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("AllPrintings.sqlite");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE cards (
+                uuid TEXT, name TEXT, manaCost TEXT, manaValue REAL, type TEXT, types TEXT,
+                subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
+                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT
+            );
+            CREATE TABLE cardLegalities (uuid TEXT, commander TEXT);
+
+            INSERT INTO cards VALUES ('atraxa', 'Atraxa, Praetors'' Voice', '{G}{W}{U}{B}', 4.0,
+                'Legendary Creature — Phyrexian Angel Horror', 'Creature', 'Phyrexian, Angel, Horror',
+                'Legendary', 'text', 'B, G, U, W', 'W, U, B, G', NULL, '4', '4', NULL);
+            INSERT INTO cards VALUES ('forest', 'Forest', NULL, 0.0, 'Basic Land — Forest', 'Land',
+                'Forest', 'Basic', 'text', NULL, NULL, NULL, NULL, NULL, NULL);
+            INSERT INTO cards VALUES ('goblin-pool', 'Goblin Raider', '{1}{G}', 2.0, 'Creature',
+                'Creature', 'Goblin', NULL, '', 'G', 'G', NULL, '2', '2', NULL);
+
+            INSERT INTO cardLegalities VALUES ('atraxa', 'Legal');
+            INSERT INTO cardLegalities VALUES ('forest', 'Legal');
+            INSERT INTO cardLegalities VALUES ('goblin-pool', 'Legal');
+            "#,
+        )
+        .unwrap();
+
+        let mut deck_lines = String::new();
+        for i in 0..goblins_in_deck {
+            let uuid = format!("goblin-deck-{i}");
+            let name = format!("Goblin Grunt {i}");
+            conn.execute(
+                "INSERT INTO cards VALUES (?1, ?2, '{G}', 1.0, 'Creature', 'Creature', 'Goblin', \
+                 NULL, '', 'G', 'G', NULL, '1', '1', NULL)",
+                rusqlite::params![uuid, name],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO cardLegalities VALUES (?1, 'Legal')",
+                rusqlite::params![uuid],
+            )
+            .unwrap();
+            deck_lines.push_str(&format!("1 {name}\n"));
+        }
+
+        (dir, CardsDb::open(&path).unwrap(), deck_lines)
+    }
+
+    #[test]
+    fn a_minor_tribal_theme_yields_no_candidate() {
+        let (_dir, db, goblin_lines) = fixture_db_with_goblin_pool(3);
+        let input = format!(
+            "Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n95 Forest\n{goblin_lines}"
+        );
+        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
+
+        assert!(
+            !result
+                .candidates
+                .iter()
+                .any(|c| c.card.name == "Goblin Raider"),
+            "tribal:Goblin is carried by only 3 cards, below the major-theme threshold"
+        );
+    }
+
+    #[test]
+    fn a_theme_carried_by_at_least_eight_cards_is_major_and_yields_candidates() {
+        let (_dir, db, goblin_lines) = fixture_db_with_goblin_pool(8);
+        let input = format!(
+            "Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n90 Forest\n{goblin_lines}"
+        );
+        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
+
+        let raider = result
+            .candidates
+            .iter()
+            .find(|c| c.card.name == "Goblin Raider")
+            .expect("tribal:Goblin, carried by 8 deck cards, is a major theme");
+        assert_eq!(raider.matched_themes, vec!["tribal:Goblin".to_string()]);
     }
 }
