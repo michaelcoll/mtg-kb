@@ -38,6 +38,11 @@ pub struct ReferencePrinting {
     pub scryfall_id: String,
     pub set_code: String,
     pub number: String,
+    /// Carte à deux Faces avec des images Scryfall distinctes (layout
+    /// `transform` ou `modal_dfc`) : la face arrière se récupère via le même
+    /// `scryfall_id`, avec `&face=back` (voir #56). `split`/`adventure`/
+    /// `aftermath`/`flip`/`meld` n'ont qu'une image et restent à `false`.
+    pub is_two_faced: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

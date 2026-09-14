@@ -295,7 +295,7 @@ impl CardsDb {
         ];
         for extra_filter in TIERS {
             let sql = format!(
-                "SELECT c.setCode, c.number, ci.scryfallId FROM cards c \
+                "SELECT c.setCode, c.number, ci.scryfallId, c.layout FROM cards c \
                  JOIN cardIdentifiers ci ON ci.uuid = c.uuid \
                  LEFT JOIN sets s ON s.code = c.setCode \
                  WHERE c.name = ?1 AND c.availability LIKE '%paper%' \
@@ -305,10 +305,12 @@ impl CardsDb {
             let mut stmt = self.conn.prepare(&sql)?;
             let mut rows = stmt.query([name])?;
             if let Some(row) = rows.next()? {
+                let layout: Option<String> = row.get(3)?;
                 return Ok(Some(ReferencePrinting {
                     set_code: row.get(0)?,
                     number: row.get(1)?,
                     scryfall_id: row.get(2)?,
+                    is_two_faced: matches!(layout.as_deref(), Some("transform" | "modal_dfc")),
                 }));
             }
         }
@@ -331,7 +333,7 @@ mod tests {
                 subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
                 colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT,
                 setCode TEXT, number TEXT, availability TEXT,
-                isPromo BOOLEAN, isOversized BOOLEAN, isFunny BOOLEAN
+                isPromo BOOLEAN, isOversized BOOLEAN, isFunny BOOLEAN, layout TEXT
             );
             CREATE TABLE cardLegalities (uuid TEXT, commander TEXT, standard TEXT);
             CREATE TABLE cardRulings (uuid TEXT, date TEXT, text TEXT);
@@ -344,47 +346,47 @@ mod tests {
             INSERT INTO cards VALUES (
                 'sol-lea', 'Sol Ring', '{1}', 1.0, 'Artifact', 'Artifact', NULL, NULL,
                 '{T}: Add {C}{C}.', NULL, NULL, NULL, NULL, NULL, NULL, 'LEA',
-                '1', 'paper', 0, 0, 0
+                '1', 'paper', 0, 0, 0, 'normal'
             );
             INSERT INTO cards VALUES (
                 'sol-c21', 'Sol Ring', '{1}', 1.0, 'Artifact', 'Artifact', NULL, NULL,
                 '{T}: Add {C}{C}.', NULL, NULL, NULL, NULL, NULL, NULL, 'C21',
-                '263', 'paper', 0, 0, 0
+                '263', 'paper', 0, 0, 0, 'normal'
             );
             INSERT INTO cards VALUES (
                 'atraxa', 'Atraxa, Praetors'' Voice', '{G}{W}{U}{B}', 4.0,
                 'Legendary Creature — Phyrexian Angel Horror', 'Creature',
                 'Phyrexian, Angel, Horror', 'Legendary', 'Flying, vigilance...',
                 'B, G, U, W', 'W, U, B, G', 'Deathtouch, Flying, Lifelink, Vigilance, Proliferate',
-                '4', '4', NULL, 'M15', '1', 'paper', 0, 0, 0
+                '4', '4', NULL, 'M15', '1', 'paper', 0, 0, 0, 'normal'
             );
             INSERT INTO cards VALUES (
                 'llanowar', 'Llanowar Elves', '{G}', 1.0, 'Creature — Elf Druid', 'Creature',
                 'Elf, Druid', NULL, '{T}: Add {G}.', 'G', 'G', NULL, '1', '1', NULL, 'M19',
-                '183', 'paper', 0, 0, 0
+                '183', 'paper', 0, 0, 0, 'normal'
             );
             INSERT INTO cards VALUES (
                 'promo-only', 'Command Tower', NULL, 0.0, 'Land', 'Land', NULL, NULL,
                 'Add one mana of any color in your Commander''s color identity.',
-                NULL, NULL, NULL, NULL, NULL, NULL, 'PPRO', '1', 'paper', 1, 0, 0
+                NULL, NULL, NULL, NULL, NULL, NULL, 'PPRO', '1', 'paper', 1, 0, 0, 'normal'
             );
             INSERT INTO cards VALUES (
                 'no-scryfall', 'Obscure Test Card', NULL, 0.0, 'Land', 'Land', NULL, NULL,
-                NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'NST', '1', 'paper', 0, 0, 0
+                NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'NST', '1', 'paper', 0, 0, 0, 'normal'
             );
             INSERT INTO cards VALUES (
                 'oversized-only', 'Oversized Test Card', NULL, 0.0, 'Land', 'Land', NULL, NULL,
-                NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'OSIZ', '1', 'paper', 0, 1, 0
+                NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'OSIZ', '1', 'paper', 0, 1, 0, 'normal'
             );
             INSERT INTO cards VALUES (
                 'sylvan-5ed', 'Sylvan Library', '{G}', 1.0, 'Enchantment', 'Enchantment', NULL,
                 NULL, 'At the beginning of your draw step, draw two additional cards.',
-                'G', 'G', NULL, NULL, NULL, NULL, '5ED', '1', 'paper', 0, 0, 0
+                'G', 'G', NULL, NULL, NULL, NULL, '5ED', '1', 'paper', 0, 0, 0, 'normal'
             );
             INSERT INTO cards VALUES (
                 'sylvan-ptc', 'Sylvan Library', '{G}', 1.0, 'Enchantment', 'Enchantment', NULL,
                 NULL, 'At the beginning of your draw step, draw two additional cards.',
-                'G', 'G', NULL, NULL, NULL, NULL, 'PTC', '1', 'paper', 1, 0, 0
+                'G', 'G', NULL, NULL, NULL, NULL, 'PTC', '1', 'paper', 1, 0, 0, 'normal'
             );
 
             INSERT INTO cardLegalities VALUES ('sol-lea', 'Legal', 'Legal');
@@ -407,6 +409,47 @@ mod tests {
             INSERT INTO sets VALUES ('PPRO', 'Promo Pack', '2020-01-01', 'promo', NULL, NULL, NULL);
             INSERT INTO sets VALUES ('NST', 'No Scryfall Test', '2020-01-01', 'promo', NULL, NULL, NULL);
             INSERT INTO sets VALUES ('OSIZ', 'Oversized Test', '2020-01-01', 'promo', NULL, NULL, NULL);
+            "#,
+        )
+        .unwrap();
+        (dir, path)
+    }
+
+    /// Étend `fixture_db` avec des Cartes à deux Faces (issue #56) : un
+    /// layout par famille (`transform`, `modal_dfc`, `split`), isolées dans
+    /// leur propre fixture pour ne pas perturber les filtres de recherche
+    /// testés sur `fixture_db` (noms/mana values choisis pour ne recouper
+    /// aucun filtre existant).
+    fn fixture_db_with_multiface() -> (tempfile::TempDir, std::path::PathBuf) {
+        let (dir, path) = fixture_db();
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            r#"
+            INSERT INTO cards VALUES (
+                'delver-transform', 'Delver of Secrets // Insectile Aberration', NULL, 1.0,
+                'Creature — Human Wizard', 'Creature', 'Human, Wizard', NULL,
+                'At the beginning of your upkeep, look at the top card of your library.',
+                'U', 'U', NULL, '1', '1', NULL, 'ISD', '51', 'paper', 0, 0, 0, 'transform'
+            );
+            INSERT INTO cards VALUES (
+                'valki-mdfc', 'Valki, God of Lies // Tibalt, Cosmic Impostor', NULL, 30.0,
+                'Legendary Creature — God', 'Creature', 'God', 'Legendary',
+                'If a permanent entering the battlefield causes a triggered ability...',
+                'B, R', 'B', NULL, '3', '3', NULL, 'KHM', '91', 'paper', 0, 0, 0, 'modal_dfc'
+            );
+            INSERT INTO cards VALUES (
+                'fire-split', 'Fire // Ice', NULL, 30.0, 'Instant', 'Instant', NULL, NULL,
+                'Fire deals 2 damage divided as you choose among one or two targets.',
+                'R, U', 'R, U', NULL, NULL, NULL, NULL, 'GPT', '119', 'paper', 0, 0, 0, 'split'
+            );
+
+            INSERT INTO cardIdentifiers VALUES ('delver-transform', 'scryfall-delver');
+            INSERT INTO cardIdentifiers VALUES ('valki-mdfc', 'scryfall-valki');
+            INSERT INTO cardIdentifiers VALUES ('fire-split', 'scryfall-fire-ice');
+
+            INSERT INTO sets VALUES ('ISD', 'Innistrad', '2011-09-30', 'expansion', NULL, 264, 264);
+            INSERT INTO sets VALUES ('KHM', 'Kaldheim', '2021-02-05', 'expansion', NULL, 285, 285);
+            INSERT INTO sets VALUES ('GPT', 'Guildpact', '2006-05-01', 'expansion', NULL, 165, 165);
             "#,
         )
         .unwrap();
@@ -664,6 +707,40 @@ mod tests {
         assert_eq!(printing.set_code, "C21");
         assert_eq!(printing.number, "263");
         assert_eq!(printing.scryfall_id, "scryfall-sol-c21");
+        assert!(!printing.is_two_faced);
+    }
+
+    #[test]
+    fn reference_printing_flags_transform_layout_as_two_faced() {
+        let (_dir, path) = fixture_db_with_multiface();
+        let db = CardsDb::open(&path).unwrap();
+        let printing = db
+            .reference_printing("Delver of Secrets // Insectile Aberration")
+            .unwrap()
+            .expect("printing found");
+        assert!(printing.is_two_faced);
+    }
+
+    #[test]
+    fn reference_printing_flags_modal_dfc_layout_as_two_faced() {
+        let (_dir, path) = fixture_db_with_multiface();
+        let db = CardsDb::open(&path).unwrap();
+        let printing = db
+            .reference_printing("Valki, God of Lies // Tibalt, Cosmic Impostor")
+            .unwrap()
+            .expect("printing found");
+        assert!(printing.is_two_faced);
+    }
+
+    #[test]
+    fn reference_printing_does_not_flag_split_layout_as_two_faced() {
+        let (_dir, path) = fixture_db_with_multiface();
+        let db = CardsDb::open(&path).unwrap();
+        let printing = db
+            .reference_printing("Fire // Ice")
+            .unwrap()
+            .expect("printing found");
+        assert!(!printing.is_two_faced);
     }
 
     #[test]
