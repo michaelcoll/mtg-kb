@@ -72,8 +72,7 @@ pub fn find_candidates(
     let mut picked: HashSet<String> = HashSet::new();
 
     for role in weak_roles {
-        for candidate in top_matches(&scored, |c| c.matched_weak_roles.iter().any(|r| r == role))
-        {
+        for candidate in top_matches(&scored, |c| c.matched_weak_roles.iter().any(|r| r == role)) {
             if picked.insert(candidate.card.name.clone()) {
                 candidates.push(candidate.clone());
             }
@@ -207,11 +206,8 @@ mod tests {
             [],
         )
         .unwrap();
-        conn.execute(
-            "INSERT INTO cardLegalities VALUES ('z-card', 'Legal')",
-            [],
-        )
-        .unwrap();
+        conn.execute("INSERT INTO cardLegalities VALUES ('z-card', 'Legal')", [])
+            .unwrap();
 
         (dir, CardsDb::open(&path).unwrap())
     }
@@ -341,14 +337,8 @@ mod tests {
         let mut major_themes = HashSet::new();
         major_themes.insert("tribal:Elf".to_string());
 
-        let candidates = find_candidates(
-            &db,
-            &color_identity,
-            &HashSet::new(),
-            &major_themes,
-            &[],
-        )
-        .unwrap();
+        let candidates =
+            find_candidates(&db, &color_identity, &HashSet::new(), &major_themes, &[]).unwrap();
 
         assert_eq!(candidates.len(), CANDIDATE_LIMIT_PER_BUCKET);
         let unique: HashSet<&str> = candidates.iter().map(|c| c.card.name.as_str()).collect();
