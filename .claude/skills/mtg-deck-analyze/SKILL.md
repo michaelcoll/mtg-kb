@@ -122,7 +122,15 @@ déterministe, Claude interprète et juge.
 - Si `kb` ne couvre pas un besoin rencontré pendant l'analyse (donnée
   manquante ou incohérente, calcul absent, filtre de `kb search` qui
   manquerait pour une investigation, etc.), ne compense pas en le
-  faisant manuellement à la place de `kb` — ouvre une issue sur le repo
-  (voir `docs/agents/issue-tracker.md`) décrivant le manque et son
-  contexte (Deck concerné, commande lancée, résultat obtenu vs attendu),
-  puis signale-le à l'utilisateur.
+  faisant manuellement à la place de `kb`. Avant d'ouvrir une issue,
+  cherche un ticket existant, ouvert ou fermé, décrivant le même manque
+  (`gh issue list --state all --search "<mots-clés>"`, voir
+  `docs/agents/issue-tracker.md`) : varie les mots-clés (nom de la
+  commande `kb`, nom de la Carte ou du champ concerné) si la première
+  recherche ne remonte rien. Si un ticket correspond, ne le recrée pas —
+  ajoute un commentaire s'il apporte un contexte nouveau (nouveau Deck
+  concerné, nouvelle commande reproduisant le même symptôme), sinon
+  contente-toi de le signaler à l'utilisateur. Seulement si aucun ticket
+  existant ne correspond, ouvre-en un décrivant le manque et son contexte
+  (Deck concerné, commande lancée, résultat obtenu vs attendu), puis
+  signale-le à l'utilisateur.
