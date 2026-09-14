@@ -16,12 +16,29 @@ pub fn is_land(card: &Card) -> bool {
 pub fn detect_roles(card: &Card) -> Vec<String> {
     static RAMP_LAND_SEARCH: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?i)search your library for a .*land").unwrap());
-    static MANA_ABILITY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)add \{").unwrap());
+    // Couvre "Add {G}", "Add an amount of {G} equal to …", "Add X mana of
+    // any one color", "Add one mana of any color in your commander's color
+    // identity", "Add X mana in any combination of colors", etc. : on
+    // cherche "add" suivi, dans la même phrase, d'un symbole de mana ou du
+    // mot "mana".
+    static MANA_ABILITY: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)add\b[^.]*(mana|\{)").unwrap());
+    // Couvre "Draw two cards", "Draw cards equal to …", "draw X cards",
+    // "you may draw that many cards", "draw two additional cards".
     static DRAW: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)draws? (a|an|one|two|three|four|five|\d+) cards?").unwrap()
+        Regex::new(
+            r"(?i)draws? (cards? equal to|that many cards?|x cards?|(a|an|one|two|three|four|five|\d+)( additional)? cards?)",
+        )
+        .unwrap()
     });
+    // Couvre "Destroy target creature", "Exile target artifact", "Destroy up
+    // to two target artifacts and/or enchantments", "Destroy X target
+    // nonland permanents".
     static TARGETED_REMOVAL: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)(destroy target|exile target|target creature gets -\d)").unwrap()
+        Regex::new(
+            r"(?i)((destroy|exile)( up to)?( (one|two|three|four|five|x|\d+))? target|target creature gets -\d)",
+        )
+        .unwrap()
     });
     static WIPE: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?i)(destroy all|exile all|each creature (gets|deals)|all creatures get)")
@@ -345,6 +362,116 @@ mod tests {
             None,
         );
         assert!(detect_roles(&protection).contains(&"protection".to_string()));
+    }
+
+    #[test]
+    fn detects_ramp_from_commander_color_identity_any_color() {
+        let arcane_signet = card(
+            "Arcane Signet",
+            "{T}: Add one mana of any color in your commander's color identity.",
+            &["Artifact"],
+            Some("{2}"),
+        );
+        assert!(detect_roles(&arcane_signet).contains(&"ramp".to_string()));
+    }
+
+    #[test]
+    fn detects_ramp_from_add_x_mana_of_any_one_color() {
+        let kami = card(
+            "Kami of Whispered Hopes",
+            "{T}: Add X mana of any one color, where X is this creature's power.",
+            &["Creature"],
+            Some("{2}{G}"),
+        );
+        assert!(detect_roles(&kami).contains(&"ramp".to_string()));
+    }
+
+    #[test]
+    fn detects_ramp_from_add_amount_equal_to() {
+        let marwyn = card(
+            "Marwyn, the Nurturer",
+            "{T}: Add an amount of {G} equal to Marwyn's power.",
+            &["Creature"],
+            Some("{1}{G}"),
+        );
+        assert!(detect_roles(&marwyn).contains(&"ramp".to_string()));
+    }
+
+    #[test]
+    fn detects_ramp_from_add_x_mana_any_combination() {
+        let selvala = card(
+            "Selvala, Heart of the Wilds",
+            "Whenever another creature enters, you may reveal the top card of your library. If it's a land card, put it into your hand. Otherwise, add X mana in any combination of colors, where X is that card's mana value.",
+            &["Creature"],
+            Some("{2}{G}"),
+        );
+        assert!(detect_roles(&selvala).contains(&"ramp".to_string()));
+    }
+
+    #[test]
+    fn detects_pioche_from_draw_cards_equal_to() {
+        let greater_good = card(
+            "Greater Good",
+            "Sacrifice a creature: Draw cards equal to that creature's power, then discard two cards.",
+            &["Enchantment"],
+            None,
+        );
+        assert!(detect_roles(&greater_good).contains(&"pioche".to_string()));
+    }
+
+    #[test]
+    fn detects_pioche_from_draw_x_cards() {
+        let disciple = card(
+            "Disciple of Freyalise",
+            "{T}, Sacrifice a Saproling: You gain 1 life and draw X cards, where X is the number of Saprolings sacrificed this way.",
+            &["Creature"],
+            Some("{2}{G}"),
+        );
+        assert!(detect_roles(&disciple).contains(&"pioche".to_string()));
+    }
+
+    #[test]
+    fn detects_pioche_from_may_draw_that_many_cards() {
+        let terrasymbiosis = card(
+            "Terrasymbiosis",
+            "Look at the top three cards of your library. Put any number of land cards from among them onto the battlefield tapped and the rest into your hand, or you may draw that many cards.",
+            &["Sorcery"],
+            None,
+        );
+        assert!(detect_roles(&terrasymbiosis).contains(&"pioche".to_string()));
+    }
+
+    #[test]
+    fn detects_pioche_from_draw_additional_cards() {
+        let sylvan_library = card(
+            "Sylvan Library",
+            "At the beginning of your draw step, draw two additional cards.",
+            &["Enchantment"],
+            None,
+        );
+        assert!(detect_roles(&sylvan_library).contains(&"pioche".to_string()));
+    }
+
+    #[test]
+    fn detects_removal_from_destroy_up_to_two_target() {
+        let force_of_vigor = card(
+            "Force of Vigor",
+            "Destroy up to two target artifacts and/or enchantments.",
+            &["Instant"],
+            None,
+        );
+        assert!(detect_roles(&force_of_vigor).contains(&"removal_cible".to_string()));
+    }
+
+    #[test]
+    fn detects_removal_from_destroy_x_target() {
+        let immoral_bargain = card(
+            "Immoral Bargain",
+            "Destroy X target nonland permanents.",
+            &["Sorcery"],
+            None,
+        );
+        assert!(detect_roles(&immoral_bargain).contains(&"removal_cible".to_string()));
     }
 
     #[test]
