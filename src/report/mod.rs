@@ -411,43 +411,44 @@ fn render_credits_section() -> String {
 
 /// Annexe : les Recommandations externes filtrées par `kb` que Claude n'a
 /// pas retenues en Suggestion.
+/// Rend une liste `<ul>` des éléments de `items` non présents dans
+/// `suggestion_names` (formatés par `label`), ou un message "Aucune." si la
+/// liste filtrée est vide.
+fn render_unused_recommendations_list<T>(
+    items: &[T],
+    suggestion_names: &HashSet<&str>,
+    card_name: impl Fn(&T) -> &str,
+    label: impl Fn(&T) -> String,
+) -> String {
+    let list_items: String = items
+        .iter()
+        .filter(|r| !suggestion_names.contains(card_name(r)))
+        .map(|r| format!("<li>{}</li>", label(r)))
+        .collect();
+    if list_items.is_empty() {
+        "<p class=\"muted\">Aucune.</p>".to_string()
+    } else {
+        format!("<ul>{list_items}</ul>")
+    }
+}
+
 fn render_external_appendix_section(
     edhrec_recommendations: &[EdhrecRecommendation],
     recommander_recommendations: &[RecommanderRecommendation],
     suggestion_names: &HashSet<&str>,
 ) -> String {
-    let edhrec_items: String = edhrec_recommendations
-        .iter()
-        .filter(|r| !suggestion_names.contains(r.card.name.as_str()))
-        .map(|r| {
-            format!(
-                "<li>{} (synergie {:.2})</li>",
-                escape_html(&r.card.name),
-                r.synergy
-            )
-        })
-        .collect();
-    let recommander_items: String = recommander_recommendations
-        .iter()
-        .filter(|r| !suggestion_names.contains(r.card.name.as_str()))
-        .map(|r| {
-            format!(
-                "<li>{} (score {:.2})</li>",
-                escape_html(&r.card.name),
-                r.score
-            )
-        })
-        .collect();
-    let edhrec_html = if edhrec_items.is_empty() {
-        "<p class=\"muted\">Aucune.</p>".to_string()
-    } else {
-        format!("<ul>{edhrec_items}</ul>")
-    };
-    let recommander_html = if recommander_items.is_empty() {
-        "<p class=\"muted\">Aucune.</p>".to_string()
-    } else {
-        format!("<ul>{recommander_items}</ul>")
-    };
+    let edhrec_html = render_unused_recommendations_list(
+        edhrec_recommendations,
+        suggestion_names,
+        |r| r.card.name.as_str(),
+        |r| format!("{} (synergie {:.2})", escape_html(&r.card.name), r.synergy),
+    );
+    let recommander_html = render_unused_recommendations_list(
+        recommander_recommendations,
+        suggestion_names,
+        |r| r.card.name.as_str(),
+        |r| format!("{} (score {:.2})", escape_html(&r.card.name), r.score),
+    );
 
     format!(
         r#"  <section>

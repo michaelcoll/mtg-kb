@@ -5,6 +5,7 @@ use anyhow::Result;
 use crate::db::cards::{CardsDb, SearchFilters};
 use crate::model::Candidate;
 
+use super::ranking::sort_desc_by_score_then_name;
 use super::themes;
 
 /// Nombre maximal de Candidats retenus par Rôle sous-représenté et par Thème
@@ -86,11 +87,7 @@ pub fn find_candidates(
         }
     }
 
-    candidates.sort_by(|a, b| {
-        b.score
-            .cmp(&a.score)
-            .then_with(|| a.card.name.cmp(&b.card.name))
-    });
+    sort_desc_by_score_then_name(&mut candidates, |c| c.score as f64, |c| &c.card.name);
     Ok(candidates)
 }
 
@@ -98,11 +95,7 @@ pub fn find_candidates(
 /// `matches`, classés par score puis par nom (comme le tri final).
 fn top_matches(scored: &[Candidate], matches: impl Fn(&Candidate) -> bool) -> Vec<&Candidate> {
     let mut ranked: Vec<&Candidate> = scored.iter().filter(|c| matches(c)).collect();
-    ranked.sort_by(|a, b| {
-        b.score
-            .cmp(&a.score)
-            .then_with(|| a.card.name.cmp(&b.card.name))
-    });
+    sort_desc_by_score_then_name(&mut ranked, |c| c.score as f64, |c| &c.card.name);
     ranked.truncate(CANDIDATE_LIMIT_PER_BUCKET);
     ranked
 }

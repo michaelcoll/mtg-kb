@@ -11,6 +11,7 @@ use serde::Deserialize;
 
 use super::resolve_and_filter;
 use crate::analyze::is_basic_land;
+use crate::analyze::ranking::sort_desc_by_score_then_name;
 use crate::db::cards::CardsDb;
 use crate::model::{AnalyzeResult, RecommanderRecommendation};
 
@@ -87,11 +88,7 @@ fn parse(raw_json: &str) -> Result<Vec<(String, f64)>> {
         .into_iter()
         .map(|i| (i.name, i.score))
         .collect();
-    items.sort_by(|a, b| {
-        b.1.partial_cmp(&a.1)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.0.cmp(&b.0))
-    });
+    sort_desc_by_score_then_name(&mut items, |i| i.1, |i| &i.0);
     Ok(items)
 }
 
