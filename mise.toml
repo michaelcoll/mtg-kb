@@ -1,7 +1,11 @@
+[hooks]
+postinstall = "lefthook install"
+
 [tools]
 rust = "1.98.1"
 "cargo:cargo-nextest" = "latest"
 "cargo:cargo-llvm-cov" = "latest"
+"go:github.com/evilmartians/lefthook/v2" = "latest"
 
 [tasks.checks]
 description = "Runs all the checks for the project"
