@@ -1,10 +1,8 @@
 use crate::db::cards::CardsDb;
 use crate::model::EnrichedAnalysis;
 
-/// Vérifie chaque Suggestion contre le glossaire (existence, légalité
-/// Commander, Identité de couleur du Commandant, absence du Deck) et
-/// retourne un message par violation trouvée. Ne s'arrête pas à la première
-/// violation : toutes sont rapportées.
+/// Un message par violation (existence, légalité Commander, Identité de
+/// couleur, absence du Deck).
 pub fn validate_suggestions(enriched: &EnrichedAnalysis, cards_db: &CardsDb) -> Vec<String> {
     let analysis = &enriched.analysis;
     let commander_identity = &analysis.commander.color_identity;

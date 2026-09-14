@@ -1,15 +1,9 @@
-//! Origine des Suggestions (voir CONTEXT.md « Origine ») : calculée par `kb
-//! report` en croisant `card_name` avec les trois listes du JSON — `kb`
-//! (`candidates`), `edhrec` (`edhrec_recommendations`), `recommander`
-//! (`recommander_recommendations`) — ou `investigation` si absente des
-//! trois. Claude ne renseigne rien : ce calcul n'existe que côté `kb`.
-
 use std::collections::HashSet;
 
 use crate::model::EnrichedAnalysis;
 
-/// Une Suggestion peut avoir plusieurs Origines (voir CONTEXT.md). Le
-/// résultat est aligné positionnellement sur `enriched.suggestions`.
+/// Origines de chaque Suggestion (`kb`, `edhrec`, `recommander`, sinon
+/// `investigation`), alignées sur `enriched.suggestions`.
 pub fn compute_origins(enriched: &EnrichedAnalysis) -> Vec<Vec<String>> {
     let analysis = &enriched.analysis;
     let candidate_names: HashSet<&str> = analysis

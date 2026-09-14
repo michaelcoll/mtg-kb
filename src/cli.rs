@@ -9,9 +9,6 @@ pub struct Cli {
     pub command: Command,
 }
 
-// Le CLI n'est parsé qu'une seule fois au démarrage : la différence de
-// taille entre variantes (ex. `Search`, qui accumule de nombreux filtres
-// optionnels) n'a pas d'impact de performance mesurable.
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 pub enum Command {

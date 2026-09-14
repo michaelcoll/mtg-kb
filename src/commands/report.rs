@@ -53,10 +53,7 @@ pub fn run(json_path: &str) -> Result<()> {
         })
         .collect::<Result<Vec<_>>>()?;
 
-    // Impressions de référence des Cartes citées par leur seul nom (Synergies,
-    // annexe des Recommandations externes non retenues) : résolues séparément
-    // des Suggestions puisqu'elles ne partagent ni structure ni alignement
-    // positionnel avec `suggestion_printings`.
+    // Cartes citées par leur seul nom (Synergies, annexe).
     let mut named_cards: HashSet<&str> = HashSet::new();
     for synergy in &enriched.analysis.synergies {
         named_cards.extend(synergy.cards.iter().map(String::as_str));

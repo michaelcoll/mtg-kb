@@ -24,8 +24,6 @@ impl RulesDb {
         Ok(Self { conn })
     }
 
-    /// Construit une base règles neuve (schéma + données) dans un fichier
-    /// donné, typiquement un chemin `.tmp` avant swap atomique.
     pub fn build(
         path: &Path,
         version: &str,
@@ -51,9 +49,7 @@ impl RulesDb {
             (version, effective_date),
         )?;
         for section in sections {
-            // Le sommaire du document répète les mêmes en-têtes de Section
-            // avant le corps des Règles : on ne garde que la première
-            // occurrence rencontrée.
+            // Le sommaire répète les en-têtes de Section.
             conn.execute(
                 "INSERT OR IGNORE INTO sections (number, title) VALUES (?1, ?2)",
                 (&section.number, &section.title),
@@ -91,10 +87,7 @@ impl RulesDb {
         }
     }
 
-    /// Une Règle ou une Section avec ses sous-Règles. Pour une Section (ex.
-    /// "100"), les enfants sont toutes les Règles dont le numéro commence par
-    /// "<numéro>.". Pour une Règle numérique (ex. "100.1"), les enfants sont
-    /// les Règles obtenues en ajoutant une seule lettre (ex. "100.1a").
+    /// Enfants d'une Section "100" : "100.*" ; d'une Règle "100.1" : "100.1[a-z]".
     pub fn rule_by_number(&self, number: &str) -> Result<Option<RuleWithChildren>> {
         let section_title: Option<String> = self
             .conn
@@ -132,10 +125,6 @@ impl RulesDb {
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
         if section_title.is_none() {
-            // Règle numérique : n'inclut que les enfants "<numéro><lettre>",
-            // pas les sous-numéros frères déjà exclus par le LIKE ci-dessus
-            // (qui ne matchait que le préfixe "<numéro>."). On ajoute donc
-            // en plus la variante à une lettre.
             let mut letter_stmt = self
                 .conn
                 .prepare("SELECT number, text FROM rules WHERE number GLOB ?1 ORDER BY number")?;
@@ -160,9 +149,7 @@ impl RulesDb {
     }
 
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<RuleEntryOut>> {
-        // Recherche de phrase : le texte est passé tel quel comme chaîne FTS5
-        // entre guillemets, pour ne pas exposer la syntaxe d'opérateurs FTS5
-        // (-, AND/OR, filtres de colonne) à l'utilisateur.
+        // Recherche de phrase : la syntaxe d'opérateurs FTS5 n'est pas exposée.
         let phrase = format!("\"{}\"", query.replace('"', "\"\""));
         let mut stmt = self.conn.prepare(
             "SELECT number, text FROM rules_fts WHERE rules_fts MATCH ?1 \

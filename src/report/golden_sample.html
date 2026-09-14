@@ -194,10 +194,7 @@
       position(target);
     }
 
-    // Repli en texte simple pour les liens sans vignette statique
-    // (`hover_card_link`, Synergies/annexe) : la vignette (`render_card_art`)
-    // gère déjà son propre repli via l'onerror de son <img> statique, donc on
-    // ne dégrade ici que les liens qui n'en ont pas.
+    // Les vignettes statiques gèrent leur propre repli via onerror.
     function degradeIfNoStaticImage() {
       if (currentTarget && !currentTarget.querySelector('img')) {
         var span = document.createElement('span');
@@ -208,9 +205,6 @@
       currentTarget = null;
     }
 
-    // Une face en échec ne masque que celle-ci ; l'infobulle entière ne se
-    // masque (et ne déclenche le repli en texte) que si les deux faces sont
-    // indisponibles (une seule sur une Carte à une Face).
     function handleFaceError(face, otherFace) {
       face.hidden = true;
       if (otherFace.hidden) {
