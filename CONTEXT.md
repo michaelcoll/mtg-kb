@@ -65,6 +65,10 @@ _Avoid_: Tag, catégorie
 Une stratégie transversale portée par des Cartes (tokens, compteurs +1/+1, aristocrats, tribal…) ; une Carte a zéro ou plusieurs Thèmes.
 _Avoid_: Archétype, tag, mécanique
 
+**Thème majeur**:
+Un Thème porté par au moins 8 Cartes du Deck ; distingue une stratégie réellement construite d'un Thème tribal accidentel (2-3 Cartes qui partagent un sous-type sans que ce soit voulu). Seuls les Thèmes majeurs alimentent les Candidats.
+_Avoid_: Thème dominant, archétype
+
 **Synergie**:
 Un Thème partagé par plusieurs Cartes du même Deck.
 _Avoid_: Combo, interaction
@@ -72,6 +76,10 @@ _Avoid_: Combo, interaction
 **Point faible**:
 Un écart mesurable du Deck par rapport à une attente : Rôle sous-représenté, courbe de mana déséquilibrée, base de mana insuffisante, Carte illégale.
 _Avoid_: Problème, défaut
+
+**Candidat**:
+Une Carte légale en Commander, dans l'Identité de couleur du Commandant, absente du Deck, retenue par `kb analyze` sur tout le pool des Cartes légales (pas seulement un extrait alphabétique) pour correspondre à un Rôle sous-représenté ou à un Thème majeur du Deck ; au plus 10 Candidats par Rôle sous-représenté et par Thème majeur, dédupliqués. Base des Suggestions choisies par Claude.
+_Avoid_: Suggestion (qui désigne le choix final, pas le calcul de `kb`), résultat de recherche
 
 **Suggestion**:
 Une Carte légale en Commander, dans l'Identité de couleur du Commandant, absente du Deck, proposée pour combler un Point faible ou renforcer une Synergie.
