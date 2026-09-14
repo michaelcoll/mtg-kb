@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
@@ -6,7 +7,7 @@ use crate::data_dir::cards_db_path;
 use crate::db::cards::CardsDb;
 use crate::model::EnrichedAnalysis;
 use crate::report;
-use crate::report::SuggestionPrintings;
+use crate::report::{CardPrintings, SuggestionPrintings};
 
 const REPORTS_DIR: &str = "reports";
 
@@ -52,10 +53,40 @@ pub fn run(json_path: &str) -> Result<()> {
         })
         .collect::<Result<Vec<_>>>()?;
 
+    // Impressions de référence des Cartes citées par leur seul nom (Synergies,
+    // annexe des Recommandations externes non retenues) : résolues séparément
+    // des Suggestions puisqu'elles ne partagent ni structure ni alignement
+    // positionnel avec `suggestion_printings`.
+    let mut named_cards: HashSet<&str> = HashSet::new();
+    for synergy in &enriched.analysis.synergies {
+        named_cards.extend(synergy.cards.iter().map(String::as_str));
+    }
+    named_cards.extend(
+        enriched
+            .analysis
+            .edhrec_recommendations
+            .iter()
+            .map(|r| r.card.name.as_str()),
+    );
+    named_cards.extend(
+        enriched
+            .analysis
+            .recommander_recommendations
+            .iter()
+            .map(|r| r.card.name.as_str()),
+    );
+    let mut card_printings: CardPrintings = CardPrintings::new();
+    for name in named_cards {
+        if let Some(printing) = cards_db.reference_printing(name)? {
+            card_printings.insert(name.to_string(), printing);
+        }
+    }
+
     let html = report::render(
         &enriched,
         commander_printing.as_ref(),
         &suggestion_printings,
+        &card_printings,
     );
 
     let dir = PathBuf::from(REPORTS_DIR);
