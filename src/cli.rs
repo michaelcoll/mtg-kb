@@ -9,6 +9,10 @@ pub struct Cli {
     pub command: Command,
 }
 
+// Le CLI n'est parsé qu'une seule fois au démarrage : la différence de
+// taille entre variantes (ex. `Search`, qui accumule de nombreux filtres
+// optionnels) n'a pas d'impact de performance mesurable.
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 pub enum Command {
     /// Analyse une Decklist Commander (fichier, ou "-" pour stdin)
@@ -62,9 +66,9 @@ pub enum Command {
         /// Sous-chaîne des sous-types (ex. "Elf", "Equipment")
         #[arg(long = "subtype")]
         subtype_contains: Option<String>,
-        /// Sous-chaîne du texte oracle
+        /// Sous-chaîne du texte oracle (répétable, combiné en ET)
         #[arg(long)]
-        text: Option<String>,
+        text: Vec<String>,
         /// Identité de couleur autorisée, ex. "WU" : la Carte doit y être incluse
         #[arg(long = "color-identity")]
         color_identity: Option<String>,
@@ -74,6 +78,24 @@ pub enum Command {
         /// Mana value exacte
         #[arg(long = "mana-value")]
         mana_value: Option<f64>,
+        /// Mana value minimale (borne incluse)
+        #[arg(long = "mana-value-min")]
+        mana_value_min: Option<f64>,
+        /// Mana value maximale (borne incluse)
+        #[arg(long = "mana-value-max")]
+        mana_value_max: Option<f64>,
+        /// Rôle détecté requis (même détection que `kb analyze`), répétable,
+        /// combiné en ET
+        #[arg(long = "role")]
+        role: Vec<String>,
+        /// Thème détecté requis (même détection que `kb analyze`), répétable,
+        /// combiné en ET
+        #[arg(long = "theme")]
+        theme: Vec<String>,
+        /// Exclut les Cartes présentes dans cette Decklist (même parsing que
+        /// `kb analyze`) ; fichier, ou "-" pour lire depuis l'entrée standard
+        #[arg(long = "exclude-deck")]
+        exclude_deck: Option<String>,
         #[arg(long, default_value_t = 50)]
         limit: usize,
         #[arg(long, value_enum, default_value_t = Format::Json)]

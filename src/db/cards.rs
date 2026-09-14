@@ -38,10 +38,16 @@ pub struct SearchFilters {
     pub name: Option<String>,
     pub type_contains: Option<String>,
     pub subtype_contains: Option<String>,
-    pub oracle_text_contains: Option<String>,
+    /// Sous-chaînes du texte oracle, combinées en ET (une Carte doit
+    /// contenir chacune d'elles).
+    pub oracle_text_contains: Vec<String>,
     pub color_identity_subset_of: Option<Vec<String>>,
     pub legal_in_format: Option<String>,
     pub mana_value: Option<f64>,
+    /// Mana value minimale (borne incluse).
+    pub mana_value_min: Option<f64>,
+    /// Mana value maximale (borne incluse).
+    pub mana_value_max: Option<f64>,
     /// Nombre maximal de résultats. `0` signifie « sans limite » (tout le
     /// pool correspondant aux filtres) : utilisé par l'analyse de Candidats,
     /// qui doit couvrir toute la Base cartes plutôt qu'un top alphabétique.
@@ -139,13 +145,21 @@ impl CardsDb {
             conditions.push("c.subtypes LIKE ?".to_string());
             params.push(Box::new(format!("%{subtype_contains}%")));
         }
-        if let Some(text) = &filters.oracle_text_contains {
+        for text in &filters.oracle_text_contains {
             conditions.push("c.text LIKE ?".to_string());
             params.push(Box::new(format!("%{text}%")));
         }
         if let Some(mv) = filters.mana_value {
             conditions.push("c.manaValue = ?".to_string());
             params.push(Box::new(mv));
+        }
+        if let Some(min) = filters.mana_value_min {
+            conditions.push("c.manaValue >= ?".to_string());
+            params.push(Box::new(min));
+        }
+        if let Some(max) = filters.mana_value_max {
+            conditions.push("c.manaValue <= ?".to_string());
+            params.push(Box::new(max));
         }
 
         sql.push_str(&joins);
@@ -502,6 +516,39 @@ mod tests {
         assert!(names.contains(&"Sol Ring"));
         assert!(names.contains(&"Llanowar Elves"));
         assert!(!names.contains(&"Atraxa, Praetors' Voice"));
+    }
+
+    #[test]
+    fn search_filters_by_mana_value_range() {
+        let (_dir, path) = fixture_db();
+        let db = CardsDb::open(&path).unwrap();
+        let results = db
+            .search(&SearchFilters {
+                mana_value_min: Some(2.0),
+                mana_value_max: Some(5.0),
+                limit: 10,
+                ..Default::default()
+            })
+            .unwrap();
+        let names: Vec<_> = results.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["Atraxa, Praetors' Voice"]);
+    }
+
+    #[test]
+    fn search_with_repeated_text_combines_as_and() {
+        let (_dir, path) = fixture_db();
+        let db = CardsDb::open(&path).unwrap();
+        // "Add" matche Sol Ring et Llanowar Elves, mais "{C}" ne matche que
+        // Sol Ring : la combinaison en ET des deux doit isoler Sol Ring.
+        let results = db
+            .search(&SearchFilters {
+                oracle_text_contains: vec!["Add".to_string(), "{C}".to_string()],
+                limit: 10,
+                ..Default::default()
+            })
+            .unwrap();
+        let names: Vec<_> = results.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["Sol Ring"]);
     }
 
     #[test]
