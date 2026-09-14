@@ -174,11 +174,14 @@ fn render_hover_preview_markup() -> String {
       preview.style.top = top + 'px';
     }
 
+    var currentTarget = null;
+
     function show(target) {
       var src = target.getAttribute('data-hover-img');
       if (!src) {
         return;
       }
+      currentTarget = target;
       if (img.src !== src) {
         img.src = src;
       }
@@ -186,7 +189,20 @@ fn render_hover_preview_markup() -> String {
       position(target);
     }
 
-    img.addEventListener('error', hide);
+    img.addEventListener('error', function () {
+      hide();
+      // Repli en texte simple pour les liens sans vignette statique
+      // (`hover_card_link`, Synergies/annexe) : la vignette (`render_card_art`)
+      // gère déjà son propre repli via l'onerror de son <img> statique, donc
+      // on ne dégrade ici que les liens qui n'en ont pas.
+      if (currentTarget && !currentTarget.querySelector('img')) {
+        var span = document.createElement('span');
+        span.className = 'muted';
+        span.textContent = currentTarget.textContent;
+        currentTarget.replaceWith(span);
+      }
+      currentTarget = null;
+    });
     document.querySelectorAll('.hover-target').forEach(function (el) {
       el.addEventListener('mouseenter', function () {
         show(el);
@@ -1018,6 +1034,7 @@ mod tests {
         assert!(html.contains("data-hover-img"));
         assert!(html.contains("addEventListener('mouseenter'"));
         assert!(html.contains("addEventListener('focus'"));
+        assert!(html.contains("querySelector('img')"));
     }
 
     #[test]
