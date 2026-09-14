@@ -467,10 +467,7 @@ mod tests {
     fn is_legal_commander_true_when_any_printing_is_legal() {
         let (_dir, path) = fixture_db();
         let db = CardsDb::open(&path).unwrap();
-        assert_eq!(
-            db.is_legal_commander("Sylvan Library").unwrap(),
-            Some(true)
-        );
+        assert_eq!(db.is_legal_commander("Sylvan Library").unwrap(), Some(true));
     }
 
     #[test]
