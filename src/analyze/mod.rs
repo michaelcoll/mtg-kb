@@ -1,6 +1,7 @@
 pub mod candidates;
 pub mod external;
 pub mod metrics;
+pub mod ranking;
 pub mod themes;
 
 use std::collections::{BTreeMap, HashSet};
@@ -119,9 +120,10 @@ pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Resul
             *theme_counts.entry(theme.clone()).or_insert(0) += resolved.quantity;
         }
     }
-    for theme in themes::detect_themes(&commander) {
-        *theme_counts.entry(theme).or_insert(0) += 1;
-    }
+    // Le Commandant n'est pas une Carte du Deck (voir CONTEXT.md) : ses
+    // Thèmes ne comptent pas dans le seuil de Thème majeur, sous peine de
+    // faire passer pour majeur un Thème porté par moins de
+    // MAJOR_THEME_MIN_CARDS Cartes du Deck.
     let major_themes: HashSet<String> = theme_counts
         .into_iter()
         .filter(|(_, count)| *count >= MAJOR_THEME_MIN_CARDS)
@@ -454,5 +456,72 @@ mod tests {
             .find(|c| c.card.name == "Goblin Raider")
             .expect("tribal:Goblin, carried by 8 deck cards, is a major theme");
         assert_eq!(raider.matched_themes, vec!["tribal:Goblin".to_string()]);
+    }
+
+    /// Reproduit le bug de revue sur #36 : un Commandant Gobelin ne doit pas
+    /// être compté dans le seuil de Thème majeur, qui ne porte que sur les
+    /// Cartes du Deck (voir CONTEXT.md, entrée Thème majeur).
+    #[test]
+    fn the_commander_does_not_count_towards_the_major_theme_threshold() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("AllPrintings.sqlite");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE cards (
+                uuid TEXT, name TEXT, manaCost TEXT, manaValue REAL, type TEXT, types TEXT,
+                subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
+                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT
+            );
+            CREATE TABLE cardLegalities (uuid TEXT, commander TEXT);
+
+            INSERT INTO cards VALUES ('goblin-commander', 'Goblin Warlord', '{2}{R}{R}', 4.0,
+                'Legendary Creature — Goblin Warrior', 'Creature', 'Goblin, Warrior',
+                'Legendary', 'text', 'R', 'R', NULL, '4', '4', NULL);
+            INSERT INTO cards VALUES ('forest', 'Forest', NULL, 0.0, 'Basic Land — Forest', 'Land',
+                'Forest', 'Basic', 'text', NULL, NULL, NULL, NULL, NULL, NULL);
+            INSERT INTO cards VALUES ('goblin-pool', 'Goblin Raider', '{1}{R}', 2.0, 'Creature',
+                'Creature', 'Goblin', NULL, '', 'R', 'R', NULL, '2', '2', NULL);
+
+            INSERT INTO cardLegalities VALUES ('goblin-commander', 'Legal');
+            INSERT INTO cardLegalities VALUES ('forest', 'Legal');
+            INSERT INTO cardLegalities VALUES ('goblin-pool', 'Legal');
+            "#,
+        )
+        .unwrap();
+
+        // 7 Gobelins dans le Deck : sous le seuil de 8. Si le Commandant
+        // (aussi un Gobelin) était compté, le total atteindrait 8 et
+        // "tribal:Goblin" deviendrait à tort un Thème majeur.
+        let mut deck_lines = String::new();
+        for i in 0..7 {
+            let uuid = format!("goblin-deck-{i}");
+            let name = format!("Goblin Grunt {i}");
+            conn.execute(
+                "INSERT INTO cards VALUES (?1, ?2, '{R}', 1.0, 'Creature', 'Creature', 'Goblin', \
+                 NULL, '', 'R', 'R', NULL, '1', '1', NULL)",
+                rusqlite::params![uuid, name],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO cardLegalities VALUES (?1, 'Legal')",
+                rusqlite::params![uuid],
+            )
+            .unwrap();
+            deck_lines.push_str(&format!("1 {name}\n"));
+        }
+
+        let db = CardsDb::open(&path).unwrap();
+        let input = format!("Commander\n1 Goblin Warlord\n\nDeck\n92 Forest\n{deck_lines}");
+        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
+
+        assert!(
+            !result
+                .candidates
+                .iter()
+                .any(|c| c.card.name == "Goblin Raider"),
+            "tribal:Goblin is carried by only 7 Deck cards; the Commander must not count towards \
+             the 8-card major-theme threshold"
+        );
     }
 }
