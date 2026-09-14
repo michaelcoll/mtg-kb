@@ -25,14 +25,41 @@ déterministe, Claude interprète et juge.
    `weaknesses` (Faiblesses, une appréciation qualitative — peut
    s'appuyer sur les Points faibles mesurés par `kb` sans s'y limiter)
    en listes à puces ; `priorities` (Priorités) en liste ordonnée
-   d'actions d'amélioration, la plus importante en premier. Choisis les
-   `suggestions` parmi `candidates` (pas forcément tous : retiens celles
-   qui comblent réellement un Point faible ou renforcent une Synergie),
-   chacune avec une `justification` en une phrase et, si pertinent, une
-   Carte à retirer : une Carte du Deck que la Suggestion propose de
-   remplacer (`card_to_remove`, facultatif). Écris un JSON = celui de
-   `kb analyze`, avec ces deux champs `verdict` et `suggestions` ajoutés
-   au niveau racine (format
+   d'actions d'amélioration, la plus importante en premier.
+
+   Construis les `suggestions` à partir de `candidates` **et**, quand
+   c'est utile, d'une investigation libre — les deux sources sont
+   traitées à égalité, aucun quota ne s'applique à l'une ou l'autre.
+   Retiens uniquement les Cartes qui comblent réellement un Point faible
+   ou renforcent une Synergie ; ignore les `candidates` qui n'en comblent
+   aucun.
+
+   **Investigue au-delà de `candidates`** dès que ces derniers semblent
+   insuffisants ou mal ciblés pour un Point faible ou un Thème majeur du
+   JSON (peu de candidats pertinents, aucun dans la bonne fourchette de
+   mana value, tous redondants avec l'existant, etc.). Utilise
+   `kb search` (skill `mtg-query`) avec les filtres pertinents : `--role`
+   ou `--theme` pour cibler le Point faible ou le Thème majeur en
+   question, `--color-identity` (celle du Commandant), `--legal-in
+   commander`, `--mana-value-min`/`--mana-value-max` pour la courbe,
+   `--exclude-deck <même Decklist>` pour ne pas proposer une Carte déjà
+   présente. Une Suggestion issue de cette investigation est traitée
+   exactement comme une Suggestion issue de `candidates` pour la suite.
+
+   **Vérifie le texte oracle avant de retenir toute Suggestion**, qu'elle
+   vienne de `candidates` ou de l'investigation : lis-le (`kb card` ou le
+   champ déjà présent dans `candidates`) et confirme que la Carte fait
+   réellement ce que son Rôle/Thème détecté prétend. Un tag
+   `removal_cible` ou un Thème détecté par motif ne suffit pas à lui
+   seul — la détection de `kb` est faite de motifs textuels, pas d'une
+   compréhension de l'effet ; une Carte mal taguée ne doit pas devenir
+   une Suggestion.
+
+   Pour chaque Suggestion retenue, rédige une `justification` en une
+   phrase et, si pertinent, une Carte à retirer : une Carte du Deck que
+   la Suggestion propose de remplacer (`card_to_remove`, facultatif).
+   Écris un JSON = celui de `kb analyze`, avec ces deux champs `verdict`
+   et `suggestions` ajoutés au niveau racine (format
    `[{"card_name": "...", "justification": "...", "card_to_remove": "..."}]`
    pour `suggestions`, `card_to_remove` omis ou `null` si la Suggestion
    n'en propose pas). Sauvegarde ce JSON enrichi dans un fichier
@@ -40,8 +67,10 @@ déterministe, Claude interprète et juge.
 
 3. **`kb report <json enrichi>`** — valide chaque Suggestion (existe,
    légale en Commander, dans l'Identité de couleur du Commandant, absente
-   du Deck, et sa Carte à retirer si renseignée fait partie du Deck) puis
-   génère le Rapport d'analyse HTML autonome dans
+   du Deck, et sa Carte à retirer si renseignée fait partie du Deck),
+   qu'elle vienne de `candidates` ou de l'investigation — la validation
+   ne distingue pas la source — puis génère le Rapport d'analyse HTML
+   autonome dans
    `reports/<commandant>-<date>.html` : Verdict (Résumé, Points forts,
    Faiblesses, Priorités), courbe, base de mana, Rôles, Points faibles,
    Synergies, Suggestions (avec justification et, le cas échéant, Carte
@@ -64,10 +93,12 @@ déterministe, Claude interprète et juge.
   pas par une préférence générique.
 - Le design du Rapport HTML est un MVP ; d'autres itérations de design
   sont prévues séparément — ne pas sur-investir dans le style ici.
+- Des `candidates` trop peu nombreux ou mal ciblés ne sont pas un manque
+  de `kb` : c'est le signal d'investiguer via `kb search` (voir l'étape 2).
 - Si `kb` ne couvre pas un besoin rencontré pendant l'analyse (donnée
-  manquante ou incohérente, calcul absent, candidats trop peu nombreux
-  ou mal ciblés, etc.), ne compense pas en le faisant manuellement à la
-  place de `kb` — ouvre une issue sur le repo (voir
-  `docs/agents/issue-tracker.md`) décrivant le manque et son contexte
-  (Deck concerné, commande lancée, résultat obtenu vs attendu), puis
-  signale-le à l'utilisateur.
+  manquante ou incohérente, calcul absent, filtre de `kb search` qui
+  manquerait pour une investigation, etc.), ne compense pas en le
+  faisant manuellement à la place de `kb` — ouvre une issue sur le repo
+  (voir `docs/agents/issue-tracker.md`) décrivant le manque et son
+  contexte (Deck concerné, commande lancée, résultat obtenu vs attendu),
+  puis signale-le à l'utilisateur.
