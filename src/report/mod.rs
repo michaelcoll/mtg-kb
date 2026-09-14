@@ -131,19 +131,26 @@ fn render_head(commander_name: &str) -> String {
 
 /// Vignette agrandie partagée, positionnée près de l'élément survolé/ciblé
 /// par le focus clavier (voir le script en pied de page) et recalée pour
-/// rester entièrement visible dans la fenêtre. Un seul visage pour l'instant
-/// (issue #55) ; #56 ajoutera un second `<img class="hover-preview-face">`
-/// ici pour afficher les deux Faces d'une Carte double-face côte à côte —
-/// c'est pourquoi l'image est déjà isolée dans son propre conteneur plutôt
-/// que directement dans `#hover-preview`.
+/// rester entièrement visible dans la fenêtre. Deux visages (issue #56) :
+/// `data-hover-img` (face avant, toujours présent) et `data-hover-img-back`
+/// (face arrière, seulement sur les Cartes à deux Faces avec images
+/// distinctes — MDFC, transform). Le second `<img class="hover-preview-face">`
+/// reste masqué tant qu'aucune face arrière n'est fournie. Le repli est
+/// symétrique entre les deux faces : l'échec d'une face ne masque que
+/// celle-ci (l'autre reste affichée) ; l'infobulle entière ne se masque, et
+/// le lien sans vignette statique (`hover_card_link`) ne se replie en texte
+/// simple, que si les deux faces sont indisponibles (une seule sur une Carte
+/// à une Face).
 fn render_hover_preview_markup() -> String {
     r#"  <div id="hover-preview" class="hover-preview" hidden>
-    <img class="hover-preview-face" alt="">
+    <img class="hover-preview-face hover-preview-face-front" alt="">
+    <img class="hover-preview-face hover-preview-face-back" alt="" hidden>
   </div>
   <script>
   (function () {
     var preview = document.getElementById('hover-preview');
-    var img = preview.querySelector('.hover-preview-face');
+    var front = preview.querySelector('.hover-preview-face-front');
+    var back = preview.querySelector('.hover-preview-face-back');
     var margin = 8;
 
     function hide() {
@@ -182,19 +189,29 @@ fn render_hover_preview_markup() -> String {
         return;
       }
       currentTarget = target;
-      if (img.src !== src) {
-        img.src = src;
+      var backSrc = target.getAttribute('data-hover-img-back');
+      front.hidden = false;
+      if (front.src !== src) {
+        front.src = src;
+      }
+      if (backSrc) {
+        back.hidden = false;
+        if (back.src !== backSrc) {
+          back.src = backSrc;
+        }
+      } else {
+        back.removeAttribute('src');
+        back.hidden = true;
       }
       preview.hidden = false;
       position(target);
     }
 
-    img.addEventListener('error', function () {
-      hide();
-      // Repli en texte simple pour les liens sans vignette statique
-      // (`hover_card_link`, Synergies/annexe) : la vignette (`render_card_art`)
-      // gère déjà son propre repli via l'onerror de son <img> statique, donc
-      // on ne dégrade ici que les liens qui n'en ont pas.
+    // Repli en texte simple pour les liens sans vignette statique
+    // (`hover_card_link`, Synergies/annexe) : la vignette (`render_card_art`)
+    // gère déjà son propre repli via l'onerror de son <img> statique, donc on
+    // ne dégrade ici que les liens qui n'en ont pas.
+    function degradeIfNoStaticImage() {
       if (currentTarget && !currentTarget.querySelector('img')) {
         var span = document.createElement('span');
         span.className = 'muted';
@@ -202,6 +219,24 @@ fn render_hover_preview_markup() -> String {
         currentTarget.replaceWith(span);
       }
       currentTarget = null;
+    }
+
+    // Une face en échec ne masque que celle-ci ; l'infobulle entière ne se
+    // masque (et ne déclenche le repli en texte) que si les deux faces sont
+    // indisponibles (une seule sur une Carte à une Face).
+    function handleFaceError(face, otherFace) {
+      face.hidden = true;
+      if (otherFace.hidden) {
+        hide();
+        degradeIfNoStaticImage();
+      }
+    }
+
+    front.addEventListener('error', function () {
+      handleFaceError(front, back);
+    });
+    back.addEventListener('error', function () {
+      handleFaceError(back, front);
     });
     document.querySelectorAll('.hover-target').forEach(function (el) {
       el.addEventListener('mouseenter', function () {
@@ -219,23 +254,50 @@ fn render_hover_preview_markup() -> String {
     .to_string()
 }
 
+/// URL Scryfall de la face avant (`front=false`) ou arrière (`back=true`,
+/// uniquement pertinent pour une Carte à deux Faces avec images distinctes —
+/// voir `ReferencePrinting::is_two_faced`) d'une Impression de référence.
+fn face_image_url(scryfall_id: &str, back: bool) -> String {
+    if back {
+        format!(
+            "https://api.scryfall.com/cards/{scryfall_id}?format=image&amp;version=normal&amp;face=back"
+        )
+    } else {
+        format!("https://api.scryfall.com/cards/{scryfall_id}?format=image&amp;version=normal")
+    }
+}
+
+/// Attribut `data-hover-img-back="..."` (face arrière, MDFC/transform
+/// uniquement — voir #56), vide pour toute autre Carte.
+fn hover_back_attr(printing: &ReferencePrinting) -> String {
+    if printing.is_two_faced {
+        format!(
+            r#" data-hover-img-back="{}""#,
+            face_image_url(&printing.scryfall_id, true)
+        )
+    } else {
+        String::new()
+    }
+}
+
 /// Portrait d'une Carte depuis l'endpoint officiel Scryfall, avec lien vers
 /// la page de l'Impression de référence et repli sur le nom si l'image ne
 /// charge pas (hors ligne) ou si aucune Impression de référence n'a de
 /// `scryfallId`. `css_class` distingue la taille (portrait du Commandant en
-/// en-tête, vignette dans une Suggestion).
+/// en-tête, vignette dans une Suggestion). Face avant uniquement pour la
+/// vignette statique ; l'infobulle au survol montre les deux Faces si la
+/// Carte en a (voir `hover_back_attr`).
 fn render_card_art(name: &str, printing: Option<&ReferencePrinting>, css_class: &str) -> String {
     let Some(printing) = printing else {
         return String::new();
     };
-    let scryfall_id = &printing.scryfall_id;
     let set_code = printing.set_code.to_lowercase();
     let number = &printing.number;
-    let image_url =
-        format!("https://api.scryfall.com/cards/{scryfall_id}?format=image&amp;version=normal");
+    let image_url = face_image_url(&printing.scryfall_id, false);
+    let back_attr = hover_back_attr(printing);
     format!(
         r#"<span class="{css_class}">
-    <a href="https://scryfall.com/card/{set_code}/{number}" target="_blank" rel="noopener" class="hover-target" data-hover-img="{image_url}">
+    <a href="https://scryfall.com/card/{set_code}/{number}" target="_blank" rel="noopener" class="hover-target" data-hover-img="{image_url}"{back_attr}>
       <img src="{image_url}" alt="{name}" onerror="this.hidden=true;this.nextElementSibling.hidden=false;">
     </a>
     <span class="{css_class}-fallback muted" hidden>{name}</span>
@@ -254,11 +316,12 @@ fn hover_card_link(name: &str, printing: Option<&ReferencePrinting>) -> String {
     let Some(printing) = printing else {
         return escaped;
     };
-    let scryfall_id = &printing.scryfall_id;
     let set_code = printing.set_code.to_lowercase();
     let number = &printing.number;
+    let image_url = face_image_url(&printing.scryfall_id, false);
+    let back_attr = hover_back_attr(printing);
     format!(
-        r#"<a href="https://scryfall.com/card/{set_code}/{number}" target="_blank" rel="noopener" class="hover-target" data-hover-img="https://api.scryfall.com/cards/{scryfall_id}?format=image&amp;version=normal">{escaped}</a>"#
+        r#"<a href="https://scryfall.com/card/{set_code}/{number}" target="_blank" rel="noopener" class="hover-target" data-hover-img="{image_url}"{back_attr}>{escaped}</a>"#
     )
 }
 
@@ -839,6 +902,7 @@ mod tests {
             scryfall_id: "abc-123".to_string(),
             set_code: "M15".to_string(),
             number: "4".to_string(),
+            is_two_faced: false,
         };
         let html = render(
             &sample(),
@@ -865,6 +929,7 @@ mod tests {
             scryfall_id: "rg-123".to_string(),
             set_code: "M19".to_string(),
             number: "191".to_string(),
+            is_two_faced: false,
         };
         let printings = vec![SuggestionPrintings {
             printing: Some(printing),
@@ -901,6 +966,7 @@ mod tests {
             scryfall_id: "elves-123".to_string(),
             set_code: "M19".to_string(),
             number: "183".to_string(),
+            is_two_faced: false,
         };
         let printings = vec![SuggestionPrintings {
             printing: None,
@@ -1030,11 +1096,52 @@ mod tests {
     fn renders_hover_preview_markup_once() {
         let html = render(&sample(), None, &no_printings(), &no_card_printings());
         assert!(html.contains(r#"<div id="hover-preview" class="hover-preview" hidden>"#));
-        assert!(html.contains(r#"<img class="hover-preview-face""#));
+        assert!(html.contains(r#"<img class="hover-preview-face hover-preview-face-front""#));
+        assert!(html.contains(r#"<img class="hover-preview-face hover-preview-face-back""#));
         assert!(html.contains("data-hover-img"));
         assert!(html.contains("addEventListener('mouseenter'"));
         assert!(html.contains("addEventListener('focus'"));
         assert!(html.contains("querySelector('img')"));
+        // Une face en échec ne masque que celle-ci (pas l'infobulle entière) tant que
+        // l'autre reste affichée — voir handleFaceError.
+        assert!(html.contains("function handleFaceError(face, otherFace)"));
+        assert!(html.contains("if (otherFace.hidden) {"));
+    }
+
+    #[test]
+    fn two_faced_commander_thumbnail_carries_a_back_face_hover_attribute() {
+        let printing = ReferencePrinting {
+            scryfall_id: "delver-123".to_string(),
+            set_code: "ISD".to_string(),
+            number: "51".to_string(),
+            is_two_faced: true,
+        };
+        let html = render(
+            &sample(),
+            Some(&printing),
+            &no_printings(),
+            &no_card_printings(),
+        );
+        assert!(html.contains(
+            r#"data-hover-img-back="https://api.scryfall.com/cards/delver-123?format=image&amp;version=normal&amp;face=back""#
+        ));
+    }
+
+    #[test]
+    fn single_faced_commander_thumbnail_has_no_back_face_hover_attribute() {
+        let printing = ReferencePrinting {
+            scryfall_id: "abc-123".to_string(),
+            set_code: "M15".to_string(),
+            number: "4".to_string(),
+            is_two_faced: false,
+        };
+        let html = render(
+            &sample(),
+            Some(&printing),
+            &no_printings(),
+            &no_card_printings(),
+        );
+        assert!(!html.contains(r#"data-hover-img-back="#));
     }
 
     #[test]
@@ -1046,6 +1153,7 @@ mod tests {
                 scryfall_id: "krenko-123".to_string(),
                 set_code: "C17".to_string(),
                 number: "12".to_string(),
+                is_two_faced: false,
             },
         );
         let html = render(&sample(), None, &no_printings(), &card_printings);
@@ -1092,6 +1200,7 @@ mod tests {
                 scryfall_id: "solring-123".to_string(),
                 set_code: "CMR".to_string(),
                 number: "412".to_string(),
+                is_two_faced: false,
             },
         );
         let html = render(&enriched, None, &no_printings(), &card_printings);
@@ -1107,6 +1216,7 @@ mod tests {
             scryfall_id: "abc-123".to_string(),
             set_code: "M15".to_string(),
             number: "4".to_string(),
+            is_two_faced: false,
         };
         let html = render(
             &sample(),
