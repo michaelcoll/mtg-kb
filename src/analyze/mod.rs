@@ -417,9 +417,8 @@ mod tests {
     #[test]
     fn a_minor_tribal_theme_yields_no_candidate() {
         let (_dir, db, goblin_lines) = fixture_db_with_goblin_pool(3);
-        let input = format!(
-            "Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n95 Forest\n{goblin_lines}"
-        );
+        let input =
+            format!("Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n95 Forest\n{goblin_lines}");
         let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
 
         assert!(
@@ -434,9 +433,8 @@ mod tests {
     #[test]
     fn a_theme_carried_by_at_least_eight_cards_is_major_and_yields_candidates() {
         let (_dir, db, goblin_lines) = fixture_db_with_goblin_pool(8);
-        let input = format!(
-            "Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n90 Forest\n{goblin_lines}"
-        );
+        let input =
+            format!("Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n90 Forest\n{goblin_lines}");
         let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
 
         let raider = result
