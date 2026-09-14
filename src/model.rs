@@ -94,6 +94,33 @@ pub struct Candidate {
     pub matched_weak_roles: Vec<String>,
 }
 
+/// Une Recommandation externe d'EDHREC (voir CONTEXT.md) : `synergy` et le
+/// taux d'inclusion (`num_decks / potential_decks`) tels que renvoyés par
+/// EDHREC, et le `header` de la liste d'origine (ex. "High Synergy Cards").
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EdhrecRecommendation {
+    pub card: Card,
+    pub synergy: f64,
+    pub inclusion_rate: f64,
+    pub header: String,
+}
+
+/// Une Recommandation externe de Recommander (voir CONTEXT.md).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RecommanderRecommendation {
+    pub card: Card,
+    pub score: f64,
+}
+
+/// L'échec d'une Source externe (réseau, HTTP 429, structure JSON
+/// inattendue) : n'interrompt pas `kb analyze`, porté ici pour signalement
+/// dans le Rapport d'analyse (voir ADR 0003).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SourceError {
+    pub source: String,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ManaCurveBucket {
     pub mana_value: u32,
@@ -134,6 +161,27 @@ pub struct AnalyzeResult {
     /// Deck, classées par Thèmes du Deck et Rôles en Point faible — base des
     /// Suggestions choisies par Claude.
     pub candidates: Vec<Candidate>,
+    /// Recommandations externes d'EDHREC (voir ADR 0003), déjà filtrées
+    /// (résolues, légales en Commander, dans l'Identité de couleur, absentes
+    /// du Deck), triées par synergie décroissante, au plus 30. Vide en mode
+    /// `--offline` ou si la Source a échoué (voir `source_errors`).
+    #[serde(default)]
+    pub edhrec_recommendations: Vec<EdhrecRecommendation>,
+    /// Noms renvoyés par EDHREC qui ne correspondent à aucune Carte de la
+    /// Base cartes.
+    #[serde(default)]
+    pub edhrec_unresolved_names: Vec<String>,
+    /// Recommandations externes de Recommander (voir ADR 0003), mêmes
+    /// filtres, triées par score décroissant, au plus 30.
+    #[serde(default)]
+    pub recommander_recommendations: Vec<RecommanderRecommendation>,
+    /// Noms renvoyés par Recommander qui ne correspondent à aucune Carte de
+    /// la Base cartes.
+    #[serde(default)]
+    pub recommander_unresolved_names: Vec<String>,
+    /// Échecs de Source externe (voir ADR 0003) : ne bloquent pas l'analyse.
+    #[serde(default)]
+    pub source_errors: Vec<SourceError>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

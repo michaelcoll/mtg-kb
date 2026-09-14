@@ -42,6 +42,10 @@ pub enum Command {
         /// jugée déséquilibrée vers le haut
         #[arg(long, default_value_t = 8)]
         max_high_cost_cards: u32,
+        /// Désactive les appels aux Sources externes (EDHREC, Recommander) :
+        /// utile pour les tests ou un usage hors ligne
+        #[arg(long, default_value_t = false)]
+        offline: bool,
     },
     /// Génère le Rapport d'analyse HTML à partir du JSON de `kb analyze`
     /// enrichi par Claude (verdict, Suggestions retenues)

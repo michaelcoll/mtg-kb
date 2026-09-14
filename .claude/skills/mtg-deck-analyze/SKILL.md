@@ -15,8 +15,19 @@ déterministe, Claude interprète et juge.
    mana, base de mana, Rôles, Points faibles, Thèmes, Synergies, et une
    liste de `candidates` (Cartes légales Commander, dans l'Identité de
    couleur, absentes du Deck, classées par Thème et Rôle en Point faible).
-   Sort du JSON. Voir le skill `mtg-query` pour vérifier des Cartes
-   individuellement pendant l'analyse si besoin.
+   Interroge aussi par défaut deux Sources externes (EDHREC et
+   Recommander, voir ADR 0003) et expose leurs Recommandations externes
+   dans `edhrec_recommendations` et `recommander_recommendations` : mêmes
+   filtres que `candidates` (légale en Commander, dans l'Identité de
+   couleur, absente du Deck), au plus 30 par Source. `--offline` désactive
+   ces appels (listes vides). Sort du JSON. Voir le skill `mtg-query` pour
+   vérifier des Cartes individuellement pendant l'analyse si besoin.
+
+   Si `source_errors` n'est pas vide, une Source externe a échoué (réseau,
+   HTTP 429, structure inattendue) : l'analyse reste complète, mais
+   `edhrec_recommendations` et/ou `recommander_recommendations` peuvent
+   être incomplètes ou vides. Signale-le à l'utilisateur ; ne bloque pas
+   l'analyse pour autant.
 
 2. **Interprétation et choix** — lis le JSON produit. Rédige un `verdict`
    structuré (objet, pas une chaîne de texte) :
@@ -27,12 +38,15 @@ déterministe, Claude interprète et juge.
    en listes à puces ; `priorities` (Priorités) en liste ordonnée
    d'actions d'amélioration, la plus importante en premier.
 
-   Construis les `suggestions` à partir de `candidates` **et**, quand
-   c'est utile, d'une investigation libre — les deux sources sont
-   traitées à égalité, aucun quota ne s'applique à l'une ou l'autre.
-   Retiens uniquement les Cartes qui comblent réellement un Point faible
-   ou renforcent une Synergie ; ignore les `candidates` qui n'en comblent
-   aucun.
+   Construis les `suggestions` à partir de `candidates`, des
+   Recommandations externes (`edhrec_recommendations`,
+   `recommander_recommendations`) **et**, quand c'est utile, d'une
+   investigation libre — les trois sources sont traitées à égalité, aucun
+   quota ne s'applique à l'une ou l'autre. Retiens uniquement les Cartes
+   qui comblent réellement un Point faible ou renforcent une Synergie ;
+   ignore les `candidates` et Recommandations externes qui n'en comblent
+   aucun — ce ne sont pas des Suggestions à recopier telles quelles, elles
+   restent soumises au même jugement que le reste.
 
    **Investigue au-delà de `candidates`** dès que ces derniers semblent
    insuffisants ou mal ciblés pour un Point faible ou un Thème majeur du
@@ -68,18 +82,23 @@ déterministe, Claude interprète et juge.
 3. **`kb report <json enrichi>`** — valide chaque Suggestion (existe,
    légale en Commander, dans l'Identité de couleur du Commandant, absente
    du Deck, et sa Carte à retirer si renseignée fait partie du Deck),
-   qu'elle vienne de `candidates` ou de l'investigation — la validation
-   ne distingue pas la source — puis génère le Rapport d'analyse HTML
-   autonome dans
+   qu'elle vienne de `candidates`, d'une Recommandation externe ou de
+   l'investigation — la validation ne distingue pas la source — puis
+   calcule l'Origine de chaque Suggestion (`kb`, `edhrec`, `recommander`,
+   `investigation`, éventuellement plusieurs — Claude ne renseigne rien
+   ici) et génère le Rapport d'analyse HTML autonome dans
    `reports/<commandant>-<date>.html` : Verdict (Résumé, Points forts,
-   Faiblesses, Priorités), courbe, base de mana, Rôles, Points faibles,
-   Synergies, Suggestions (avec justification et, le cas échéant, Carte
-   à retirer affichée en plus petit avec son image), Cartes non
-   résolues. Un `verdict` en chaîne de texte (ancien format) est rejeté
-   avec une erreur claire — pas de rétrocompatibilité. Si une Suggestion
-   viole une de ces contraintes, `kb report` échoue en nommant la Carte
-   et la règle violée, sans écrire de rapport : corrige les
-   `suggestions` du JSON enrichi et relance, ne contourne pas l'échec.
+   Faiblesses, Priorités), avertissement si `source_errors` n'est pas
+   vide, courbe, base de mana, Rôles, Points faibles, Synergies,
+   Suggestions (avec justification, badges d'Origine et, le cas échéant,
+   Carte à retirer affichée en plus petit avec son image), une annexe des
+   Recommandations externes filtrées non retenues en Suggestion, crédit
+   et lien vers EDHREC et Recommander, Cartes non résolues. Un `verdict`
+   en chaîne de texte (ancien format) est rejeté avec une erreur claire —
+   pas de rétrocompatibilité. Si une Suggestion viole une de ces
+   contraintes, `kb report` échoue en nommant la Carte et la règle
+   violée, sans écrire de rapport : corrige les `suggestions` du JSON
+   enrichi et relance, ne contourne pas l'échec.
 
 ## Points d'attention
 
@@ -93,8 +112,13 @@ déterministe, Claude interprète et juge.
   pas par une préférence générique.
 - Le design du Rapport HTML est un MVP ; d'autres itérations de design
   sont prévues séparément — ne pas sur-investir dans le style ici.
-- Des `candidates` trop peu nombreux ou mal ciblés ne sont pas un manque
-  de `kb` : c'est le signal d'investiguer via `kb search` (voir l'étape 2).
+- Des `candidates` ou Recommandations externes trop peu nombreux ou mal
+  ciblés ne sont pas un manque de `kb` : c'est le signal d'investiguer via
+  `kb search` (voir l'étape 2).
+- `edhrec_recommendations`/`recommander_recommendations` vides sans
+  `source_errors` associée n'est pas forcément une panne : Recommander
+  renvoie une liste vide si la Decklist est trop courte, EDHREC est par
+  Commandant seul (indépendant du reste du Deck).
 - Si `kb` ne couvre pas un besoin rencontré pendant l'analyse (donnée
   manquante ou incohérente, calcul absent, filtre de `kb search` qui
   manquerait pour une investigation, etc.), ne compense pas en le

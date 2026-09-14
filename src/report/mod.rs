@@ -1,10 +1,11 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use crate::model::{
-    EnrichedAnalysis, ManaBase, ManaCurve, ReferencePrinting, Suggestion, Synergy, UnresolvedLine,
-    Verdict,
+    EdhrecRecommendation, EnrichedAnalysis, ManaBase, ManaCurve, RecommanderRecommendation,
+    ReferencePrinting, SourceError, Suggestion, Synergy, UnresolvedLine, Verdict,
 };
 
+pub mod origins;
 pub mod validate;
 
 /// Nom de fichier "slug" dérivé du nom du Commandant : minuscules,
@@ -82,6 +83,8 @@ fn render_head(commander_name: &str) -> String {
   .badge {{ display: inline-block; padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.85rem; font-weight: 600; }}
   .badge-ok {{ background: rgba(62,207,142,0.15); color: var(--ok); }}
   .badge-error {{ background: rgba(255,107,107,0.15); color: var(--error); }}
+  .badge-origin {{ background: rgba(124,156,255,0.15); color: var(--accent); font-size: 0.7rem; padding: 0.1rem 0.5rem; margin-left: 0.35rem; text-transform: uppercase; letter-spacing: 0.03em; }}
+  .warning {{ border-color: var(--error); }}
   section {{ background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem 1.5rem; margin-top: 1rem; }}
   table {{ width: 100%; border-collapse: collapse; }}
   td, th {{ padding: 0.35rem 0.5rem; text-align: left; border-bottom: 1px solid var(--border); }}
@@ -286,6 +289,11 @@ fn render_synergies_section(synergies: &[Synergy]) -> String {
 pub struct SuggestionPrintings {
     pub printing: Option<ReferencePrinting>,
     pub card_to_remove_printing: Option<ReferencePrinting>,
+    /// Origine(s) de la Suggestion (voir `origins::compute_origins`) :
+    /// `kb`, `edhrec`, `recommander`, `investigation`, éventuellement
+    /// plusieurs. Vide si non calculée (ex. tests construisant le rendu
+    /// directement).
+    pub origins: Vec<String>,
 }
 
 /// Bloc « Carte à retirer » (voir CONTEXT.md) : plus petit que la
@@ -305,10 +313,25 @@ fn render_card_to_remove(
     )
 }
 
+/// Badges d'Origine d'une Suggestion (voir `origins::compute_origins`) :
+/// un badge par Origine, dans l'ordre `kb`, `edhrec`, `recommander`,
+/// `investigation`.
+fn render_origin_badges(origins: &[String]) -> String {
+    origins
+        .iter()
+        .map(|o| {
+            format!(
+                "<span class=\"badge badge-origin\">{}</span>",
+                escape_html(o)
+            )
+        })
+        .collect()
+}
+
 /// Chaque Suggestion en ligne : vignette de l'Impression de référence à
-/// gauche (même mécanisme que le portrait du Commandant), nom et
-/// justification à droite, Carte à retirer le cas échéant. `printings[i]`
-/// correspond à `suggestions[i]`.
+/// gauche (même mécanisme que le portrait du Commandant), nom, badges
+/// d'Origine et justification à droite, Carte à retirer le cas échéant.
+/// `printings[i]` correspond à `suggestions[i]`.
 fn render_suggestions_section(
     suggestions: &[Suggestion],
     printings: &[SuggestionPrintings],
@@ -326,12 +349,13 @@ fn render_suggestions_section(
             let name = escape_html(&s.card_name);
             let resolved = printings.get(i).unwrap_or(&empty);
             let art = render_card_art(&name, resolved.printing.as_ref(), "suggestion-art");
+            let badges = render_origin_badges(&resolved.origins);
             let card_to_remove = render_card_to_remove(
                 s.card_to_remove.as_ref(),
                 resolved.card_to_remove_printing.as_ref(),
             );
             format!(
-                "<li class=\"suggestion-row\">{art}<span class=\"suggestion-body\"><strong>{name}</strong><p>{}</p>{card_to_remove}</span></li>",
+                "<li class=\"suggestion-row\">{art}<span class=\"suggestion-body\"><strong>{name}</strong>{badges}<p>{}</p>{card_to_remove}</span></li>",
                 escape_html(&s.justification)
             )
         })
@@ -341,6 +365,97 @@ fn render_suggestions_section(
         r#"  <section>
     <h2 style="{SECTION_H2_STYLE}">Suggestions</h2>
     <ul class="suggestion-list">{suggestion_items}</ul>
+  </section>
+"#
+    )
+}
+
+/// Avertissement (voir CONTEXT.md « Source externe ») affiché si une Source
+/// externe a échoué : l'analyse reste complète, mais peut manquer des
+/// Recommandations externes. Absent du rendu si `source_errors` est vide.
+fn render_source_errors_section(source_errors: &[SourceError]) -> String {
+    if source_errors.is_empty() {
+        return String::new();
+    }
+    let items: String = source_errors
+        .iter()
+        .map(|e| {
+            format!(
+                "<li><strong>{}</strong> — {}</li>",
+                escape_html(&e.source),
+                escape_html(&e.message)
+            )
+        })
+        .collect();
+    format!(
+        r#"  <section class="warning">
+    <h2 style="{SECTION_H2_STYLE}">Avertissement</h2>
+    <p class="muted">Une ou plusieurs Sources externes ont échoué ; l'analyse reste complète, mais peut manquer des Recommandations externes.</p>
+    <ul>{items}</ul>
+  </section>
+"#
+    )
+}
+
+/// Crédit et lien vers EDHREC et Recommander, exigé par les conditions de
+/// Recommander (voir ADR 0003).
+fn render_credits_section() -> String {
+    format!(
+        r#"  <section>
+    <h2 style="{SECTION_H2_STYLE}">Crédits</h2>
+    <p class="muted">Recommandations externes fournies par <a href="https://edhrec.com" target="_blank" rel="noopener">EDHREC</a> et <a href="https://recommander.cards" target="_blank" rel="noopener">Recommander</a>.</p>
+  </section>
+"#
+    )
+}
+
+/// Annexe : les Recommandations externes filtrées par `kb` que Claude n'a
+/// pas retenues en Suggestion.
+fn render_external_appendix_section(
+    edhrec_recommendations: &[EdhrecRecommendation],
+    recommander_recommendations: &[RecommanderRecommendation],
+    suggestion_names: &HashSet<&str>,
+) -> String {
+    let edhrec_items: String = edhrec_recommendations
+        .iter()
+        .filter(|r| !suggestion_names.contains(r.card.name.as_str()))
+        .map(|r| {
+            format!(
+                "<li>{} (synergie {:.2})</li>",
+                escape_html(&r.card.name),
+                r.synergy
+            )
+        })
+        .collect();
+    let recommander_items: String = recommander_recommendations
+        .iter()
+        .filter(|r| !suggestion_names.contains(r.card.name.as_str()))
+        .map(|r| {
+            format!(
+                "<li>{} (score {:.2})</li>",
+                escape_html(&r.card.name),
+                r.score
+            )
+        })
+        .collect();
+    let edhrec_html = if edhrec_items.is_empty() {
+        "<p class=\"muted\">Aucune.</p>".to_string()
+    } else {
+        format!("<ul>{edhrec_items}</ul>")
+    };
+    let recommander_html = if recommander_items.is_empty() {
+        "<p class=\"muted\">Aucune.</p>".to_string()
+    } else {
+        format!("<ul>{recommander_items}</ul>")
+    };
+
+    format!(
+        r#"  <section>
+    <h2 style="{SECTION_H2_STYLE}">Recommandations externes non retenues</h2>
+    <h3>EDHREC</h3>
+    {edhrec_html}
+    <h3>Recommander</h3>
+    {recommander_html}
   </section>
 "#
     )
@@ -400,6 +515,12 @@ pub fn render(
         commander_printing,
     ));
     let verdict = trimmed_with_newline(render_verdict_section(&enriched.verdict));
+    let source_errors = render_source_errors_section(&a.source_errors);
+    let source_errors = if source_errors.is_empty() {
+        String::new()
+    } else {
+        trimmed_with_newline(source_errors)
+    };
     let mana_curve = trimmed_with_newline(render_mana_curve_section(&a.mana_curve));
     let mana_base = trimmed_with_newline(render_mana_base_section(&a.mana_base));
     let roles = trimmed_with_newline(render_roles_section(&a.role_counts));
@@ -409,10 +530,21 @@ pub fn render(
         &enriched.suggestions,
         suggestion_printings,
     ));
+    let suggestion_names: HashSet<&str> = enriched
+        .suggestions
+        .iter()
+        .map(|s| s.card_name.as_str())
+        .collect();
+    let appendix = trimmed_with_newline(render_external_appendix_section(
+        &a.edhrec_recommendations,
+        &a.recommander_recommendations,
+        &suggestion_names,
+    ));
+    let credits = trimmed_with_newline(render_credits_section());
     let unresolved = render_unresolved_section(&a.unresolved);
 
     format!(
-        "{head}<body>\n<main>\n  {header}\n{verdict}\n{mana_curve}\n{mana_base}\n{roles}\n{weaknesses}\n{synergies}\n{suggestions}\n{unresolved}</main>\n</body>\n</html>\n"
+        "{head}<body>\n<main>\n  {header}\n{verdict}\n{source_errors}{mana_curve}\n{mana_base}\n{roles}\n{weaknesses}\n{synergies}\n{suggestions}\n{appendix}\n{credits}\n{unresolved}</main>\n</body>\n</html>\n"
     )
 }
 
@@ -472,6 +604,11 @@ mod tests {
                     cards: vec!["Krenko, Mob Boss".to_string()],
                 }],
                 candidates: vec![],
+                edhrec_recommendations: vec![],
+                edhrec_unresolved_names: vec![],
+                recommander_recommendations: vec![],
+                recommander_unresolved_names: vec![],
+                source_errors: vec![],
             },
             verdict: Verdict {
                 summary: "Solide, manque de ramp".to_string(),
@@ -583,6 +720,7 @@ mod tests {
         let printings = vec![SuggestionPrintings {
             printing: Some(printing),
             card_to_remove_printing: None,
+            origins: vec![],
         }];
         let html = render(&sample(), None, &printings);
         assert!(
@@ -618,6 +756,7 @@ mod tests {
         let printings = vec![SuggestionPrintings {
             printing: None,
             card_to_remove_printing: Some(printing),
+            origins: vec![],
         }];
         let html = render(&enriched, None, &printings);
         assert!(html.contains("class=\"card-to-remove\""));
@@ -637,5 +776,104 @@ mod tests {
         let html = render(&enriched, None, &no_printings());
         assert!(!html.contains("<script>alert(1)</script>"));
         assert!(html.contains("&lt;script&gt;"));
+    }
+
+    #[test]
+    fn renders_no_warning_section_without_source_errors() {
+        let html = render(&sample(), None, &no_printings());
+        assert!(!html.contains("Avertissement"));
+    }
+
+    #[test]
+    fn renders_a_warning_section_when_a_source_failed() {
+        let mut enriched = sample();
+        enriched.analysis.source_errors = vec![SourceError {
+            source: "edhrec".to_string(),
+            message: "HTTP 429".to_string(),
+        }];
+        let html = render(&enriched, None, &no_printings());
+        assert!(html.contains("Avertissement"));
+        assert!(html.contains("edhrec"));
+        assert!(html.contains("HTTP 429"));
+    }
+
+    #[test]
+    fn always_renders_credits_for_edhrec_and_recommander() {
+        let html = render(&sample(), None, &no_printings());
+        assert!(html.contains("https://edhrec.com"));
+        assert!(html.contains("https://recommander.cards"));
+    }
+
+    #[test]
+    fn appendix_lists_external_recommendations_not_turned_into_suggestions() {
+        let mut enriched = sample();
+        enriched.analysis.edhrec_recommendations = vec![EdhrecRecommendation {
+            card: Card {
+                name: "Sol Ring".to_string(),
+                mana_cost: None,
+                mana_value: None,
+                type_line: None,
+                types: vec![],
+                subtypes: vec![],
+                supertypes: vec![],
+                oracle_text: None,
+                color_identity: vec![],
+                colors: vec![],
+                keywords: vec![],
+                power: None,
+                toughness: None,
+                loyalty: None,
+            },
+            synergy: 0.42,
+            inclusion_rate: 0.9,
+            header: "High Synergy Cards".to_string(),
+        }];
+        let html = render(&enriched, None, &no_printings());
+        assert!(html.contains("Recommandations externes non retenues"));
+        assert!(html.contains("Sol Ring"));
+        assert!(html.contains("0.42"));
+    }
+
+    #[test]
+    fn appendix_excludes_external_recommendations_already_turned_into_suggestions() {
+        let mut enriched = sample();
+        enriched.analysis.edhrec_recommendations = vec![EdhrecRecommendation {
+            card: Card {
+                name: "Rampant Growth".to_string(),
+                mana_cost: None,
+                mana_value: None,
+                type_line: None,
+                types: vec![],
+                subtypes: vec![],
+                supertypes: vec![],
+                oracle_text: None,
+                color_identity: vec![],
+                colors: vec![],
+                keywords: vec![],
+                power: None,
+                toughness: None,
+                loyalty: None,
+            },
+            synergy: 0.42,
+            inclusion_rate: 0.9,
+            header: "High Synergy Cards".to_string(),
+        }];
+        // "Rampant Growth" est déjà une Suggestion retenue (voir `sample()`) :
+        // l'annexe ne doit pas la lister une seconde fois.
+        let html = render(&enriched, None, &no_printings());
+        assert!(!html.contains("0.42"));
+    }
+
+    #[test]
+    fn renders_origin_badges_for_a_suggestion() {
+        let printings = vec![SuggestionPrintings {
+            printing: None,
+            card_to_remove_printing: None,
+            origins: vec!["kb".to_string(), "edhrec".to_string()],
+        }];
+        let html = render(&sample(), None, &printings);
+        assert!(html.contains("badge-origin"));
+        assert!(html.contains(">kb<"));
+        assert!(html.contains(">edhrec<"));
     }
 }
