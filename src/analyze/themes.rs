@@ -5,10 +5,7 @@ use regex::Regex;
 use crate::model::Card;
 
 /// Thèmes détectés par motifs sur le texte oracle et les sous-types de
-/// Créature. Une Carte peut porter 0..n Thèmes. Le Thème "tribal:<sous-type>"
-/// n'est pas une liste figée de tribus : n'importe quel sous-type de
-/// Créature devient un Thème, et c'est le partage de ce Thème par plusieurs
-/// Cartes du Deck (voir Synergies) qui en fait une tribu pertinente.
+/// Créature. Tout sous-type de Créature devient un Thème "tribal:<sous-type>".
 pub fn detect_themes(card: &Card) -> Vec<String> {
     static TOKENS: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?i)creates? .*tokens?").unwrap());

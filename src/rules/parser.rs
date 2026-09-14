@@ -20,12 +20,11 @@ pub struct GlossaryEntry {
     pub definition: String,
 }
 
-/// Numéro de règle : trois chiffres, point, un ou plusieurs chiffres, puis
-/// éventuellement un point suivi d'une lettre unique (ex. 100.1, 100.1a).
+/// Ex. "100.1", "100.1a".
 static RULE_LINE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(\d{3}\.\d+[a-z]?)\.?\s+(.+)$").unwrap());
 
-/// En-tête de section : trois chiffres, point, espace, titre (ex. "100. General").
+/// Ex. "100. General".
 static SECTION_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d{3})\.\s+(.+)$").unwrap());
 
 pub fn parse_effective_date(text: &str) -> Option<String> {
@@ -42,9 +41,6 @@ fn parent_of(number: &str) -> Option<String> {
     }
 }
 
-/// Découpe le corps des règles numérotées (hors Glossaire) en Sections et
-/// Règles. Chaque Règle peut s'étendre sur plusieurs lignes tant qu'elles ne
-/// commencent pas elles-mêmes par un numéro de Règle ou de Section.
 pub fn parse_rules(body: &str) -> (Vec<SectionEntry>, Vec<RuleEntry>) {
     let mut sections = Vec::new();
     let mut rules: Vec<RuleEntry> = Vec::new();
@@ -68,7 +64,6 @@ pub fn parse_rules(body: &str) -> (Vec<SectionEntry>, Vec<RuleEntry>) {
                 title: caps.get(2).unwrap().as_str().trim().to_string(),
             });
         } else if let Some(last) = rules.last_mut() {
-            // Continuation d'une Règle multi-lignes.
             last.text.push(' ');
             last.text.push_str(line.trim());
         }
@@ -77,8 +72,7 @@ pub fn parse_rules(body: &str) -> (Vec<SectionEntry>, Vec<RuleEntry>) {
     (sections, rules)
 }
 
-/// Découpe la section Glossaire : blocs séparés par une ligne vide, dont la
-/// première ligne est le terme et le reste la définition.
+/// Blocs séparés par une ligne vide : terme puis définition.
 pub fn parse_glossary(body: &str) -> Vec<GlossaryEntry> {
     let mut entries = Vec::new();
     let mut lines = body.lines().peekable();
@@ -97,7 +91,6 @@ pub fn parse_glossary(body: &str) -> Vec<GlossaryEntry> {
             definition_lines.push(lines.next().unwrap().trim().to_string());
         }
         if definition_lines.is_empty() {
-            // Un terme sans définition n'est pas une entrée exploitable.
             continue;
         }
         entries.push(GlossaryEntry {
@@ -109,9 +102,8 @@ pub fn parse_glossary(body: &str) -> Vec<GlossaryEntry> {
     entries
 }
 
-/// Sépare le document complet en (corps des règles, glossaire) à partir des
-/// dernières occurrences des en-têtes "Glossary" et "Credits" : le sommaire,
-/// en tête de document, répète ces mêmes titres avant le contenu réel.
+/// Utilise les dernières occurrences de "Glossary"/"Credits" : le sommaire
+/// répète ces titres.
 pub fn split_document(full_text: &str) -> (&str, &str) {
     let body_end = full_text.rfind("\nGlossary\n").unwrap_or(full_text.len());
     let glossary_start = body_end + "\nGlossary\n".len();

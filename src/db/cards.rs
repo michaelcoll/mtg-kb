@@ -5,8 +5,7 @@ use rusqlite::{Connection, Row};
 
 use crate::model::{Card, ReferencePrinting, Ruling, SetInfo, split_csv_field};
 
-/// Colonnes de `cardLegalities` acceptées comme filtre de format : whitelist
-/// stricte, car le nom de colonne est injecté tel quel dans le SQL.
+/// Whitelist : le nom de colonne est injecté tel quel dans le SQL.
 const LEGALITY_FORMATS: &[&str] = &[
     "alchemy",
     "brawl",
@@ -38,19 +37,14 @@ pub struct SearchFilters {
     pub name: Option<String>,
     pub type_contains: Option<String>,
     pub subtype_contains: Option<String>,
-    /// Sous-chaînes du texte oracle, combinées en ET (une Carte doit
-    /// contenir chacune d'elles).
+    /// Combinées en ET.
     pub oracle_text_contains: Vec<String>,
     pub color_identity_subset_of: Option<Vec<String>>,
     pub legal_in_format: Option<String>,
     pub mana_value: Option<f64>,
-    /// Mana value minimale (borne incluse).
     pub mana_value_min: Option<f64>,
-    /// Mana value maximale (borne incluse).
     pub mana_value_max: Option<f64>,
-    /// Nombre maximal de résultats. `0` signifie « sans limite » (tout le
-    /// pool correspondant aux filtres) : utilisé par l'analyse de Candidats,
-    /// qui doit couvrir toute la Base cartes plutôt qu'un top alphabétique.
+    /// `0` = sans limite.
     pub limit: usize,
 }
 
@@ -94,10 +88,6 @@ impl CardsDb {
         Ok(Self { conn })
     }
 
-    /// Résout une Carte par son nom oracle exact. Dédoublonne les Impressions
-    /// (plusieurs lignes `cards` peuvent partager le même nom) en ne retenant
-    /// que la première trouvée : les champs oracle sont stables entre
-    /// Impressions.
     pub fn card_by_name(&self, name: &str) -> Result<Option<Card>> {
         let sql = format!("SELECT {CARD_COLUMNS} FROM cards WHERE name = ?1 LIMIT 1");
         let mut stmt = self.conn.prepare(&sql)?;
@@ -108,11 +98,8 @@ impl CardsDb {
         }
     }
 
-    /// Recherche des Cartes selon des filtres combinés, dédoublonnées par nom
-    /// oracle. Les filtres appliqués en SQL (nom, type, texte, mana value,
-    /// légalité) réduisent le jeu de candidats ; le filtre d'Identité de
-    /// couleur (sous-ensemble) est appliqué ensuite car il n'est pas
-    /// exprimable simplement sur la colonne texte `colorIdentity`.
+    /// Dédoublonné par nom ; le filtre d'Identité de couleur est appliqué
+    /// en Rust, après le SQL.
     pub fn search(&self, filters: &SearchFilters) -> Result<Vec<Card>> {
         let mut sql = format!("SELECT DISTINCT {CARD_COLUMNS} FROM cards c");
         let mut joins = String::new();
@@ -168,11 +155,7 @@ impl CardsDb {
             sql.push_str(&conditions.join(" AND "));
         }
         sql.push_str(" ORDER BY c.name");
-        // `limit == 0` signifie « sans limite » : pas de LIMIT SQL, pas de
-        // troncature côté Rust (utilisé pour couvrir tout le pool de
-        // Candidats, cf. CONTEXT.md). Sinon, sur-échantillonne avant le
-        // filtre d'Identité de couleur, appliqué en Rust, pour ne pas
-        // tronquer prématurément les résultats.
+        // Sur-échantillonne : le filtre d'Identité de couleur vient après.
         if filters.limit > 0 {
             let fetch_cap = filters.limit.saturating_mul(20).max(500);
             sql.push_str(&format!(" LIMIT {fetch_cap}"));
@@ -226,9 +209,6 @@ impl CardsDb {
         }
     }
 
-    /// Rulings datés d'une Carte par nom oracle exact. Utilise l'uuid de la
-    /// première Impression trouvée : les Rulings d'une Carte sont identiques
-    /// entre Impressions.
     pub fn rulings_by_name(&self, name: &str) -> Result<Option<Vec<Ruling>>> {
         let mut uuid_stmt = self
             .conn
@@ -254,15 +234,8 @@ impl CardsDb {
         Ok(Some(rulings))
     }
 
-    /// Légalité en Commander d'une Carte par nom oracle exact. `None` si la
-    /// Carte n'existe pas dans la Base cartes.
-    ///
-    /// `cardLegalities` contient une ligne par Impression (uuid) d'une même
-    /// Carte, et certaines Impressions (promos notamment) n'ont pas de
-    /// légalité renseignée (`commander` à NULL) alors que d'autres
-    /// Impressions de la même Carte sont bien légales. On considère donc la
-    /// Carte légale dès qu'**au moins une** Impression l'est, plutôt que de
-    /// se fier à une seule ligne arbitraire (`LIMIT 1` sans `ORDER BY`).
+    /// `None` si la Carte n'existe pas. Légale dès qu'au moins une Impression
+    /// l'est (certaines promos ont `commander` à NULL).
     pub fn is_legal_commander(&self, name: &str) -> Result<Option<bool>> {
         if self.card_by_name(name)?.is_none() {
             return Ok(None);
@@ -279,11 +252,8 @@ impl CardsDb {
         Ok(Some(legal))
     }
 
-    /// Résout l'Impression de référence d'une Carte (voir CONTEXT.md) : la
-    /// plus récente en papier, hors promo, hors format surdimensionné et
-    /// hors cartes fantaisie. À défaut, relâche d'abord le filtre promo,
-    /// puis les filtres surdimensionné/fantaisie. `None` si aucune
-    /// Impression papier n'a de `scryfallId`.
+    /// La plus récente en papier, hors promo/surdimensionnée/fantaisie ; ces
+    /// filtres sont relâchés successivement à défaut.
     pub fn reference_printing(&self, name: &str) -> Result<Option<ReferencePrinting>> {
         const TIERS: &[&str] = &[
             "AND (c.isPromo = 0 OR c.isPromo IS NULL) \
@@ -415,11 +385,6 @@ mod tests {
         (dir, path)
     }
 
-    /// Étend `fixture_db` avec des Cartes à deux Faces (issue #56) : un
-    /// layout par famille (`transform`, `modal_dfc`, `split`), isolées dans
-    /// leur propre fixture pour ne pas perturber les filtres de recherche
-    /// testés sur `fixture_db` (noms/mana values choisis pour ne recouper
-    /// aucun filtre existant).
     fn fixture_db_with_multiface() -> (tempfile::TempDir, std::path::PathBuf) {
         let (dir, path) = fixture_db();
         let conn = Connection::open(&path).unwrap();
@@ -502,10 +467,6 @@ mod tests {
         assert_eq!(db.is_legal_commander("Nope").unwrap(), None);
     }
 
-    /// Régression #35 : Sylvan Library a une Impression papier légale
-    /// (5ED) et une Impression promo (PTC) sans légalité renseignée
-    /// (`commander` NULL). La Carte doit rester légale dès qu'une seule
-    /// Impression l'est, peu importe l'ordre de retour des lignes SQL.
     #[test]
     fn is_legal_commander_true_when_any_printing_is_legal() {
         let (_dir, path) = fixture_db();

@@ -31,17 +31,12 @@ pub struct SetInfo {
     pub total_set_size: Option<i64>,
 }
 
-/// L'Impression de référence d'une Carte (voir CONTEXT.md) : celle utilisée
-/// pour illustrer la Carte dans le Rapport d'analyse.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ReferencePrinting {
     pub scryfall_id: String,
     pub set_code: String,
     pub number: String,
-    /// Carte à deux Faces avec des images Scryfall distinctes (layout
-    /// `transform` ou `modal_dfc`) : la face arrière se récupère via le même
-    /// `scryfall_id`, avec `&face=back` (voir #56). `split`/`adventure`/
-    /// `aftermath`/`flip`/`meld` n'ont qu'une image et restent à `false`.
+    /// Layout `transform` ou `modal_dfc` : face arrière via `&face=back`.
     pub is_two_faced: bool,
 }
 
@@ -99,27 +94,22 @@ pub struct Candidate {
     pub matched_weak_roles: Vec<String>,
 }
 
-/// Une Recommandation externe d'EDHREC (voir CONTEXT.md) : `synergy` et le
-/// taux d'inclusion (`num_decks / potential_decks`) tels que renvoyés par
-/// EDHREC, et le `header` de la liste d'origine (ex. "High Synergy Cards").
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EdhrecRecommendation {
     pub card: Card,
     pub synergy: f64,
+    /// `num_decks / potential_decks`
     pub inclusion_rate: f64,
+    /// Liste EDHREC d'origine (ex. "High Synergy Cards").
     pub header: String,
 }
 
-/// Une Recommandation externe de Recommander (voir CONTEXT.md).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RecommanderRecommendation {
     pub card: Card,
     pub score: f64,
 }
 
-/// L'échec d'une Source externe (réseau, HTTP 429, structure JSON
-/// inattendue) : n'interrompt pas `kb analyze`, porté ici pour signalement
-/// dans le Rapport d'analyse (voir ADR 0003).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SourceError {
     pub source: String,
@@ -151,40 +141,22 @@ pub struct AnalyzeResult {
     pub cards: Vec<ResolvedCard>,
     pub unresolved: Vec<UnresolvedLine>,
     pub card_count: u32,
-    /// Écarts de construction du Deck (taille, singleton, Identité de
-    /// couleur) : des erreurs de deckbuilding, pas des Points faibles
-    /// stratégiques.
+    /// Taille, singleton, Identité de couleur.
     pub construction_errors: Vec<String>,
     pub mana_curve: ManaCurve,
     pub mana_base: ManaBase,
     pub role_counts: BTreeMap<String, u32>,
-    /// Points faibles au sens du glossaire : Rôle sous-représenté, courbe de
-    /// mana déséquilibrée, base de mana insuffisante, Carte illégale.
     pub weaknesses: Vec<String>,
     pub synergies: Vec<Synergy>,
-    /// Cartes légales Commander, dans l'Identité de couleur, absentes du
-    /// Deck, classées par Thèmes du Deck et Rôles en Point faible — base des
-    /// Suggestions choisies par Claude.
     pub candidates: Vec<Candidate>,
-    /// Recommandations externes d'EDHREC (voir ADR 0003), déjà filtrées
-    /// (résolues, légales en Commander, dans l'Identité de couleur, absentes
-    /// du Deck), triées par synergie décroissante, au plus 30. Vide en mode
-    /// `--offline` ou si la Source a échoué (voir `source_errors`).
     #[serde(default)]
     pub edhrec_recommendations: Vec<EdhrecRecommendation>,
-    /// Noms renvoyés par EDHREC qui ne correspondent à aucune Carte de la
-    /// Base cartes.
     #[serde(default)]
     pub edhrec_unresolved_names: Vec<String>,
-    /// Recommandations externes de Recommander (voir ADR 0003), mêmes
-    /// filtres, triées par score décroissant, au plus 30.
     #[serde(default)]
     pub recommander_recommendations: Vec<RecommanderRecommendation>,
-    /// Noms renvoyés par Recommander qui ne correspondent à aucune Carte de
-    /// la Base cartes.
     #[serde(default)]
     pub recommander_unresolved_names: Vec<String>,
-    /// Échecs de Source externe (voir ADR 0003) : ne bloquent pas l'analyse.
     #[serde(default)]
     pub source_errors: Vec<SourceError>,
 }
@@ -193,16 +165,10 @@ pub struct AnalyzeResult {
 pub struct Suggestion {
     pub card_name: String,
     pub justification: String,
-    /// Carte à retirer (voir CONTEXT.md) : facultative, une Carte du Deck
-    /// que cette Suggestion propose de remplacer.
     #[serde(default)]
     pub card_to_remove: Option<String>,
 }
 
-/// L'appréciation d'ensemble d'un Deck (voir CONTEXT.md) : Résumé, Points
-/// forts, Faiblesses (qualitatives, distinctes des Points faibles mesurés
-/// par `kb`) et Priorités (actions d'amélioration, ordonnées par
-/// importance).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Verdict {
     pub summary: String,
@@ -214,8 +180,7 @@ pub struct Verdict {
     pub priorities: Vec<String>,
 }
 
-/// Le JSON de `kb analyze` enrichi par Claude : verdict et Suggestions
-/// retenues parmi les candidats. `kb report` prend ce JSON en entrée.
+/// Le JSON de `kb analyze` enrichi par Claude, entrée de `kb report`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EnrichedAnalysis {
     #[serde(flatten)]
@@ -236,8 +201,6 @@ pub fn split_csv_field(raw: Option<&str>) -> Vec<String> {
 mod tests {
     use super::*;
 
-    /// Analyse minimale valide, en `serde_json::Value` pour que les tests
-    /// puissent y fusionner un `verdict` sans manipuler du JSON en chaîne.
     fn minimal_analysis_json(verdict: serde_json::Value) -> serde_json::Value {
         serde_json::json!({
             "commander": {

@@ -1,7 +1,6 @@
-//! Client EDHREC (voir ADR 0003) : endpoint JSON non officiel
+//! Client EDHREC : endpoint JSON non officiel
 //! `json.edhrec.com/pages/commanders/<slug>.json`, recommandant par
-//! Commandant seul. Le client HTTP réel est derrière `EdhrecClient` pour que
-//! le parsing/filtrage soit testable sans réseau.
+//! Commandant seul.
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -17,8 +16,6 @@ use crate::db::cards::CardsDb;
 use crate::model::{AnalyzeResult, EdhrecRecommendation};
 
 pub trait EdhrecClient {
-    /// Récupère le corps JSON brut de l'endpoint EDHREC pour ce slug de
-    /// Commandant.
     fn fetch(&self, slug: &str) -> Result<String>;
 }
 
@@ -35,9 +32,6 @@ impl EdhrecClient for HttpEdhrecClient {
     }
 }
 
-/// Slug EDHREC dérivé du nom du Commandant : minuscules, ponctuation et
-/// diacritiques retirés (conservateur : seuls les caractères alphanumériques
-/// ASCII et les espaces sont gardés), espaces réduits à des tirets simples.
 /// Ex. "Atraxa, Praetors' Voice" -> "atraxa-praetors-voice".
 pub fn slug(commander_name: &str) -> String {
     let mut out = String::new();
@@ -96,9 +90,7 @@ struct RawMeta {
     header: String,
 }
 
-/// Fusionne `container.json_dict.cardlists[].cardviews[]`, dédupliquées par
-/// nom (on garde la meilleure synergie en cas de doublon entre listes), et
-/// trie par synergie décroissante.
+/// Dédupliqué par nom en gardant la meilleure synergie.
 fn parse(raw_json: &str) -> Result<Vec<(String, RawMeta)>> {
     let parsed: EdhrecResponse =
         serde_json::from_str(raw_json).context("structure JSON EDHREC inattendue")?;
@@ -134,8 +126,6 @@ fn parse(raw_json: &str) -> Result<Vec<(String, RawMeta)>> {
     Ok(items)
 }
 
-/// Récupère (via le cache) puis filtre les Recommandations externes EDHREC
-/// pour le Commandant de `analysis`.
 pub fn fetch_and_filter(
     client: &dyn EdhrecClient,
     cache_dir: &Path,

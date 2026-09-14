@@ -8,15 +8,10 @@ use crate::model::{
 pub mod origins;
 pub mod validate;
 
-/// Impressions de référence des Cartes citées par leur seul nom dans le
-/// Rapport (Synergies, annexe des Recommandations externes non retenues) :
-/// pas de vignette statique pour ces Cartes, seulement un lien Scryfall qui
-/// s'agrandit au survol/focus (voir `hover_card_link`). Clé = nom de Carte
-/// tel qu'il apparaît dans l'analyse enrichie.
+/// Impressions de référence des Cartes citées par leur seul nom (Synergies,
+/// annexe), par nom de Carte.
 pub type CardPrintings = HashMap<String, ReferencePrinting>;
 
-/// Nom de fichier "slug" dérivé du nom du Commandant : minuscules,
-/// caractères non alphanumériques réduits à des tirets simples.
 pub fn slugify(name: &str) -> String {
     let mut slug = String::new();
     let mut last_was_dash = true; // évite un tiret en tête
@@ -129,18 +124,8 @@ fn render_head(commander_name: &str) -> String {
     )
 }
 
-/// Vignette agrandie partagée, positionnée près de l'élément survolé/ciblé
-/// par le focus clavier (voir le script en pied de page) et recalée pour
-/// rester entièrement visible dans la fenêtre. Deux visages (issue #56) :
-/// `data-hover-img` (face avant, toujours présent) et `data-hover-img-back`
-/// (face arrière, seulement sur les Cartes à deux Faces avec images
-/// distinctes — MDFC, transform). Le second `<img class="hover-preview-face">`
-/// reste masqué tant qu'aucune face arrière n'est fournie. Le repli est
-/// symétrique entre les deux faces : l'échec d'une face ne masque que
-/// celle-ci (l'autre reste affichée) ; l'infobulle entière ne se masque, et
-/// le lien sans vignette statique (`hover_card_link`) ne se replie en texte
-/// simple, que si les deux faces sont indisponibles (une seule sur une Carte
-/// à une Face).
+/// Vignette agrandie partagée au survol/focus des `.hover-target`, lisant
+/// `data-hover-img` et, pour les Cartes à deux Faces, `data-hover-img-back`.
 fn render_hover_preview_markup() -> String {
     r#"  <div id="hover-preview" class="hover-preview" hidden>
     <img class="hover-preview-face hover-preview-face-front" alt="">
@@ -207,10 +192,7 @@ fn render_hover_preview_markup() -> String {
       position(target);
     }
 
-    // Repli en texte simple pour les liens sans vignette statique
-    // (`hover_card_link`, Synergies/annexe) : la vignette (`render_card_art`)
-    // gère déjà son propre repli via l'onerror de son <img> statique, donc on
-    // ne dégrade ici que les liens qui n'en ont pas.
+    // Les vignettes statiques gèrent leur propre repli via onerror.
     function degradeIfNoStaticImage() {
       if (currentTarget && !currentTarget.querySelector('img')) {
         var span = document.createElement('span');
@@ -221,9 +203,6 @@ fn render_hover_preview_markup() -> String {
       currentTarget = null;
     }
 
-    // Une face en échec ne masque que celle-ci ; l'infobulle entière ne se
-    // masque (et ne déclenche le repli en texte) que si les deux faces sont
-    // indisponibles (une seule sur une Carte à une Face).
     function handleFaceError(face, otherFace) {
       face.hidden = true;
       if (otherFace.hidden) {
@@ -254,9 +233,6 @@ fn render_hover_preview_markup() -> String {
     .to_string()
 }
 
-/// URL Scryfall de la face avant (`front=false`) ou arrière (`back=true`,
-/// uniquement pertinent pour une Carte à deux Faces avec images distinctes —
-/// voir `ReferencePrinting::is_two_faced`) d'une Impression de référence.
 fn face_image_url(scryfall_id: &str, back: bool) -> String {
     if back {
         format!(
@@ -267,8 +243,6 @@ fn face_image_url(scryfall_id: &str, back: bool) -> String {
     }
 }
 
-/// Attribut `data-hover-img-back="..."` (face arrière, MDFC/transform
-/// uniquement — voir #56), vide pour toute autre Carte.
 fn hover_back_attr(printing: &ReferencePrinting) -> String {
     if printing.is_two_faced {
         format!(
@@ -280,13 +254,8 @@ fn hover_back_attr(printing: &ReferencePrinting) -> String {
     }
 }
 
-/// Portrait d'une Carte depuis l'endpoint officiel Scryfall, avec lien vers
-/// la page de l'Impression de référence et repli sur le nom si l'image ne
-/// charge pas (hors ligne) ou si aucune Impression de référence n'a de
-/// `scryfallId`. `css_class` distingue la taille (portrait du Commandant en
-/// en-tête, vignette dans une Suggestion). Face avant uniquement pour la
-/// vignette statique ; l'infobulle au survol montre les deux Faces si la
-/// Carte en a (voir `hover_back_attr`).
+/// Vignette Scryfall (face avant) liée à l'Impression de référence, avec
+/// repli sur le nom si l'image ne charge pas.
 fn render_card_art(name: &str, printing: Option<&ReferencePrinting>, css_class: &str) -> String {
     let Some(printing) = printing else {
         return String::new();
@@ -306,11 +275,7 @@ fn render_card_art(name: &str, printing: Option<&ReferencePrinting>, css_class: 
     )
 }
 
-/// Nom de Carte cliquable vers sa page Scryfall, avec le même mécanisme
-/// d'agrandissement au survol/focus que les vignettes (`render_card_art`),
-/// mais sans image statique : utilisé là où seul le nom est affiché
-/// (Synergies, annexe). Texte brut, sans lien, si aucune Impression de
-/// référence n'est connue — même repli que les vignettes.
+/// Comme `render_card_art`, mais sans image statique : seul le nom est affiché.
 fn hover_card_link(name: &str, printing: Option<&ReferencePrinting>) -> String {
     let escaped = escape_html(name);
     let Some(printing) = printing else {
@@ -471,25 +436,13 @@ fn render_synergies_section(synergies: &[Synergy], card_printings: &CardPrinting
     )
 }
 
-/// L'Impression de référence d'une Suggestion et, si elle en propose une,
-/// celle de sa Carte à retirer. Regroupe les deux plutôt que de les passer
-/// en deux slices parallèles à `suggestions` : l'alignement positionnel
-/// entre trois collections indépendantes s'est révélé fragile (voir la
-/// revue de #25/#26).
 #[derive(Debug, Default, Clone)]
 pub struct SuggestionPrintings {
     pub printing: Option<ReferencePrinting>,
     pub card_to_remove_printing: Option<ReferencePrinting>,
-    /// Origine(s) de la Suggestion (voir `origins::compute_origins`) :
-    /// `kb`, `edhrec`, `recommander`, `investigation`, éventuellement
-    /// plusieurs. Vide si non calculée (ex. tests construisant le rendu
-    /// directement).
     pub origins: Vec<String>,
 }
 
-/// Bloc « Carte à retirer » (voir CONTEXT.md) : plus petit que la
-/// Suggestion, avec sa propre vignette si une Impression de référence est
-/// connue. Absent du rendu si la Suggestion n'en propose pas.
 fn render_card_to_remove(
     card_to_remove: Option<&String>,
     printing: Option<&ReferencePrinting>,
@@ -504,9 +457,6 @@ fn render_card_to_remove(
     )
 }
 
-/// Badges d'Origine d'une Suggestion (voir `origins::compute_origins`) :
-/// un badge par Origine, dans l'ordre `kb`, `edhrec`, `recommander`,
-/// `investigation`.
 fn render_origin_badges(origins: &[String]) -> String {
     origins
         .iter()
@@ -519,9 +469,6 @@ fn render_origin_badges(origins: &[String]) -> String {
         .collect()
 }
 
-/// Chaque Suggestion en ligne : vignette de l'Impression de référence à
-/// gauche (même mécanisme que le portrait du Commandant), nom, badges
-/// d'Origine et justification à droite, Carte à retirer le cas échéant.
 /// `printings[i]` correspond à `suggestions[i]`.
 fn render_suggestions_section(
     suggestions: &[Suggestion],
@@ -561,9 +508,6 @@ fn render_suggestions_section(
     )
 }
 
-/// Avertissement (voir CONTEXT.md « Source externe ») affiché si une Source
-/// externe a échoué : l'analyse reste complète, mais peut manquer des
-/// Recommandations externes. Absent du rendu si `source_errors` est vide.
 fn render_source_errors_section(source_errors: &[SourceError]) -> String {
     if source_errors.is_empty() {
         return String::new();
@@ -588,8 +532,7 @@ fn render_source_errors_section(source_errors: &[SourceError]) -> String {
     )
 }
 
-/// Crédit et lien vers EDHREC et Recommander, exigé par les conditions de
-/// Recommander (voir ADR 0003).
+/// Exigé par les conditions d'utilisation de Recommander.
 fn render_credits_section() -> String {
     format!(
         r#"  <section>
@@ -600,11 +543,6 @@ fn render_credits_section() -> String {
     )
 }
 
-/// Annexe : les Recommandations externes filtrées par `kb` que Claude n'a
-/// pas retenues en Suggestion.
-/// Rend une liste `<ul>` des éléments de `items` non présents dans
-/// `suggestion_names` (formatés par `label`), ou un message "Aucune." si la
-/// liste filtrée est vide.
 fn render_unused_recommendations_list<T>(
     items: &[T],
     suggestion_names: &HashSet<&str>,
@@ -681,18 +619,10 @@ fn render_unresolved_section(unresolved: &[UnresolvedLine]) -> String {
     )
 }
 
-/// Retire les espaces de fin et ajoute un unique saut de ligne, pour
-/// recoller des sections rendues indépendamment dans un gabarit commun.
 fn trimmed_with_newline(s: String) -> String {
     format!("{}\n", s.trim_end())
 }
 
-/// Rendu HTML autonome (MVP) du Rapport d'analyse à partir du JSON de
-/// `kb analyze` enrichi par Claude (verdict, Suggestions retenues).
-///
-/// Chaque section est rendue par sa propre fonction (issue #21) pour que les
-/// évolutions futures (Verdict structuré, images Scryfall, ...) touchent une
-/// seule section sans toucher aux autres.
 pub fn render(
     enriched: &EnrichedAnalysis,
     commander_printing: Option<&ReferencePrinting>,
@@ -858,9 +788,6 @@ mod tests {
         assert!(html.contains("&lt;script&gt;"));
     }
 
-    /// Non-régression du rendu (issue #21) : le HTML produit pour une
-    /// analyse de référence ne doit pas changer d'un octet en dehors des
-    /// évolutions volontaires (Verdict structuré, images Scryfall, ...).
     #[test]
     fn render_output_is_stable_across_the_section_split() {
         let html = render(&sample(), None, &no_printings(), &no_card_printings());

@@ -1,12 +1,4 @@
-//! Sources externes interrogées par `kb analyze` (voir ADR 0003 et
-//! CONTEXT.md « Source externe » / « Recommandation externe ») : EDHREC et
-//! Recommander. Chaque Source a son propre module (`edhrec`, `recommander`)
-//! avec un client HTTP derrière une interface (`EdhrecClient`,
-//! `RecommanderClient`), pour que le filtrage soit testable sans réseau.
-//!
-//! `fetch_all` orchestre les deux Sources : une Source en échec (réseau,
-//! HTTP 429, structure JSON inattendue) ne bloque pas l'autre ni l'analyse,
-//! elle produit un `SourceError`.
+//! Sources externes interrogées par `kb analyze` : EDHREC et Recommander.
 
 pub mod cache;
 pub mod edhrec;
@@ -23,15 +15,10 @@ use crate::model::{
     AnalyzeResult, Card, EdhrecRecommendation, RecommanderRecommendation, SourceError,
 };
 
-/// Nombre maximal de Recommandations externes gardées par Source (voir
-/// CONTEXT.md « Recommandation externe »).
 pub const MAX_RECOMMENDATIONS_PER_SOURCE: usize = 30;
 
-/// Durée de fraîcheur du cache EDHREC (voir ADR 0003).
 pub const EDHREC_CACHE_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
-/// Le résultat de l'interrogation des deux Sources externes, prêt à être
-/// fusionné dans l'`AnalyzeResult` par la commande `kb analyze`.
 #[derive(Debug, Default, Clone)]
 pub struct ExternalSourcesResult {
     pub edhrec_recommendations: Vec<EdhrecRecommendation>,
@@ -42,9 +29,8 @@ pub struct ExternalSourcesResult {
 }
 
 /// Interroge EDHREC puis Recommander et fusionne leurs Recommandations
-/// externes filtrées. Ne retourne jamais d'erreur : l'échec d'une Source est
-/// capturé dans `source_errors` plutôt que de remonter, conformément à l'ADR
-/// 0003 ("mode dégradé").
+/// externes filtrées. L'échec d'une Source est capturé dans `source_errors`
+/// sans bloquer l'autre.
 pub fn fetch_all(
     db: &CardsDb,
     analysis: &AnalyzeResult,
@@ -93,16 +79,11 @@ fn deck_names_including_commander(analysis: &AnalyzeResult) -> HashSet<String> {
     names
 }
 
-/// Résout et filtre une liste brute `(nom, métadonnée)` renvoyée par une
-/// Source externe : gardée si résolue dans la Base cartes, légale en
-/// Commander, dans l'Identité de couleur du Commandant et absente du Deck
-/// (voir CONTEXT.md « Recommandation externe »). Au plus
-/// `MAX_RECOMMENDATIONS_PER_SOURCE` Cartes filtrées sont gardées ; les noms
-/// non résolus dans la Base cartes sont listés à part. L'ordre d'entrée
-/// (déjà trié par la Source) est préservé.
-/// `(Recommandations externes résolues et filtrées, noms non résolus)`.
 type ResolvedAndUnresolved<M> = (Vec<(Card, M)>, Vec<String>);
 
+/// Garde, dans l'ordre d'entrée et au plus `MAX_RECOMMENDATIONS_PER_SOURCE`,
+/// les Cartes résolues, légales en Commander, dans l'Identité de couleur et
+/// absentes du Deck ; les noms non résolus sont listés à part.
 pub(super) fn resolve_and_filter<M>(
     items: Vec<(String, M)>,
     db: &CardsDb,

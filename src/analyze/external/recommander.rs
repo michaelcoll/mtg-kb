@@ -1,8 +1,5 @@
-//! Client Recommander (voir ADR 0003) : API publique sans clé,
-//! `POST https://api.recommander.cards/public-release/api/decks/recommend/top`,
-//! recommandant à partir de la Decklist complète (sans terrains de base).
-//! Pas de cache : la réponse dépend de la Decklist, jamais identique d'un
-//! appel à l'autre.
+//! Client Recommander : recommande à partir de la Decklist complète (sans
+//! terrains de base).
 
 use std::collections::HashSet;
 
@@ -19,8 +16,6 @@ const RECOMMANDER_URL: &str =
     "https://api.recommander.cards/public-release/api/decks/recommend/top";
 
 pub trait RecommanderClient {
-    /// Envoie `body` à l'API Recommander et renvoie le corps JSON brut de la
-    /// réponse.
     fn fetch(&self, body: &serde_json::Value) -> Result<String>;
 }
 
@@ -40,10 +35,6 @@ impl RecommanderClient for HttpRecommanderClient {
     }
 }
 
-/// Corps de la requête Recommander : `deck` exclut les terrains de base
-/// (voir ADR 0003). Recommander modélise un Commandant `partner`, non
-/// supporté par cette Base cartes (`analyze::run` n'accepte qu'un seul
-/// Commandant) : `partner` n'est jamais envoyé.
 pub(super) fn request_body(analysis: &AnalyzeResult) -> serde_json::Value {
     let deck: Vec<String> = analysis
         .cards
@@ -78,7 +69,6 @@ struct Item {
     oracle_id: Option<String>,
 }
 
-/// Parse `data.recommendations[]` et trie par score décroissant.
 fn parse(raw_json: &str) -> Result<Vec<(String, f64)>> {
     let parsed: RecommanderResponse =
         serde_json::from_str(raw_json).context("structure JSON Recommander inattendue")?;
@@ -92,9 +82,8 @@ fn parse(raw_json: &str) -> Result<Vec<(String, f64)>> {
     Ok(items)
 }
 
-/// Interroge puis filtre les Recommandations externes Recommander pour la
-/// Decklist de `analysis`. Attention : la liste est vide si la Decklist est
-/// trop courte (comportement de Recommander, pas une erreur).
+/// La liste est vide si la Decklist est trop courte (comportement de
+/// Recommander, pas une erreur).
 pub fn fetch_and_filter(
     client: &dyn RecommanderClient,
     analysis: &AnalyzeResult,

@@ -59,11 +59,6 @@ pub fn run(
     print_json(&result)
 }
 
-/// Calcule l'`AnalyzeResult` (voir `analyze::run`, sans dépendance réseau)
-/// puis, hors `--offline`, interroge les Sources externes et fusionne leurs
-/// Recommandations externes et erreurs éventuelles. Séparé de `run` pour
-/// être testable avec des clients de test, sans réseau (voir ADR 0003 et
-/// les critères d'acceptation de l'issue #38).
 #[allow(clippy::too_many_arguments)]
 fn analyze_deck(
     input: &str,
@@ -90,10 +85,6 @@ fn analyze_deck(
     Ok(result)
 }
 
-/// Fusionne le résultat de l'interrogation des Sources externes dans
-/// l'`AnalyzeResult` : rien à faire de plus, `analyze::run` produit déjà des
-/// listes vides pour ces champs (voir ADR 0003 : `analyze::run` reste sans
-/// dépendance réseau).
 fn merge_external_sources(result: &mut AnalyzeResult, outcome: ExternalSourcesResult) {
     result.edhrec_recommendations = outcome.edhrec_recommendations;
     result.edhrec_unresolved_names = outcome.edhrec_unresolved_names;

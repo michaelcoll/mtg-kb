@@ -55,13 +55,8 @@ pub fn run(
     Ok(())
 }
 
-/// Recherche combinée. Le filtre par Rôle/Thème (même détection que `kb
-/// analyze`, voir `analyze::metrics::detect_roles` / `analyze::themes::detect_themes`)
-/// et l'exclusion par Decklist ne sont pas exprimables en SQL : ils sont
-/// appliqués ici, après la requête SQL, sur le pool complet correspondant
-/// aux autres filtres (`limit: 0` côté `SearchFilters`, sans quoi ils
-/// tronqueraient le pool avant même d'être appliqués). `limit` n'est
-/// appliqué qu'à la fin, sur le résultat déjà filtré.
+/// Les filtres Rôle/Thème et l'exclusion par Decklist sont appliqués après
+/// la requête SQL, donc `limit` ne s'applique qu'à la fin.
 #[allow(clippy::too_many_arguments)]
 fn search_cards(
     db: &CardsDb,
@@ -111,17 +106,13 @@ fn search_cards(
     Ok(results)
 }
 
-/// `wanted` doit toutes être présentes (insensible à la casse) parmi
-/// `detected` : combinaison en ET des `--role`/`--theme` répétés.
 fn card_matches_all(detected: &[String], wanted: &[String]) -> bool {
     wanted
         .iter()
         .all(|w| detected.iter().any(|d| d.eq_ignore_ascii_case(w)))
 }
 
-/// Noms des Cartes présentes dans une Decklist (Commandant et Deck), avec le
-/// même parsing que `kb analyze`. `path` peut être "-" pour lire depuis
-/// l'entrée standard.
+/// `path` peut être "-" pour lire depuis l'entrée standard.
 fn names_in_decklist(path: &str) -> Result<HashSet<String>> {
     let input = if path == "-" {
         let mut buf = String::new();

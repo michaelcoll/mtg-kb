@@ -13,8 +13,7 @@ pub struct Decklist {
     pub deck: Vec<DecklistLine>,
 }
 
-/// Sections reconnues (insensible à la casse) ; toute autre section (ex.
-/// Sideboard, Maybeboard) est ignorée, comme demandé par l'issue.
+/// Sections reconnues (insensible à la casse) ; toute autre section est ignorée.
 static COMMANDER_HEADERS: &[&str] = &["commander", "commanders"];
 static DECK_HEADERS: &[&str] = &["deck", "decklist", "mainboard", "main"];
 
@@ -24,8 +23,6 @@ enum Section {
     Ignored,
 }
 
-/// Numéro éventuel suivi d'un "x" optionnel, puis le nom complet de la Carte
-/// (les cartes double face gardent leur nom complet "A // B").
 static QUANTITY_LINE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"^(\d+)x?\s+(.+)$").unwrap());
 

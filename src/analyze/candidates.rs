@@ -8,21 +8,13 @@ use crate::model::Candidate;
 use super::ranking::sort_desc_by_score_then_name;
 use super::themes;
 
-/// Nombre maximal de Candidats retenus par Rôle sous-représenté et par Thème
-/// majeur (voir `find_candidates`).
 const CANDIDATE_LIMIT_PER_BUCKET: usize = 10;
 
 /// Cartes légales Commander, dans l'Identité de couleur du Commandant,
-/// absentes du Deck : le pool complet (sans plafond ni tri alphabétique) est
-/// scoré en Rust via la détection de Rôles/Thèmes existante — une seule fois
-/// par Carte, pas une fois par Rôle/Thème — puis réparti en Candidats :
-/// jusqu'à `CANDIDATE_LIMIT_PER_BUCKET` par Rôle sous-représenté et jusqu'à
-/// `CANDIDATE_LIMIT_PER_BUCKET` par Thème majeur, dédupliqués par nom. Un
-/// Candidat porte tous les Rôles/Thèmes qu'il matche parmi ceux du Deck
-/// (`matched_themes` / `matched_weak_roles`), pas seulement celui qui l'a
-/// fait retenir dans son panier. Seules les Cartes qui correspondent à au
-/// moins un Thème majeur ou un Rôle en Point faible sont retenues : un score
-/// de 0 n'apporterait rien de plus qu'un `kb search`.
+/// absentes du Deck, réparties en Candidats : jusqu'à
+/// `CANDIDATE_LIMIT_PER_BUCKET` par Rôle sous-représenté et par Thème majeur,
+/// dédupliqués par nom. Un Candidat porte tous les Rôles/Thèmes du Deck qu'il
+/// matche. Les Cartes qui n'en matchent aucun sont écartées.
 pub fn find_candidates(
     db: &CardsDb,
     color_identity: &[String],

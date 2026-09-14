@@ -14,15 +14,10 @@ use crate::model::{AnalyzeResult, ResolvedCard, Synergy, UnresolvedLine};
 
 const REQUIRED_DECK_SIZE: u32 = 100;
 
-/// Nombre minimal de Cartes du Deck devant porter un Thème pour qu'il soit
-/// un Thème majeur (voir CONTEXT.md) : un Thème tribal accidentel porté par
-/// 2-3 Cartes ne doit pas générer de Candidats.
 const MAJOR_THEME_MIN_CARDS: u32 = 8;
 
-/// Résout et valide une Decklist en un AnalyzeResult. Erreur explicite
-/// uniquement pour l'ambiguïté de Commandant (0 ou 2+) : tout le reste
-/// (Cartes non résolues, écarts de validation) est reporté dans le résultat
-/// sans bloquer l'analyse, conformément à l'ADR "kb calcule, Claude juge".
+/// Erreur uniquement si le Commandant est ambigu (0 ou 2+) : Cartes non
+/// résolues et écarts de validation sont reportés dans le résultat.
 pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Result<AnalyzeResult> {
     let decklist = parser::parse(input);
 
@@ -120,10 +115,7 @@ pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Resul
             *theme_counts.entry(theme.clone()).or_insert(0) += resolved.quantity;
         }
     }
-    // Le Commandant n'est pas une Carte du Deck (voir CONTEXT.md) : ses
-    // Thèmes ne comptent pas dans le seuil de Thème majeur, sous peine de
-    // faire passer pour majeur un Thème porté par moins de
-    // MAJOR_THEME_MIN_CARDS Cartes du Deck.
+    // Les Thèmes du Commandant ne comptent pas dans le seuil de Thème majeur.
     let major_themes: HashSet<String> = theme_counts
         .into_iter()
         .filter(|(_, count)| *count >= MAJOR_THEME_MIN_CARDS)
@@ -150,9 +142,7 @@ pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Resul
         weaknesses,
         synergies,
         candidates,
-        // Sources externes : `analyze::run` reste sans dépendance réseau
-        // (voir ADR 0003) ; remplies ensuite par `commands::analyze`, hors
-        // `--offline`.
+        // Remplies ensuite par `commands::analyze`, hors `--offline`.
         edhrec_recommendations: Vec::new(),
         edhrec_unresolved_names: Vec::new(),
         recommander_recommendations: Vec::new(),
@@ -161,8 +151,6 @@ pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Resul
     })
 }
 
-/// Thèmes partagés par au moins deux Cartes du Deck, avec les Cartes
-/// concernées.
 fn find_synergies(cards: &[ResolvedCard]) -> Vec<Synergy> {
     let mut cards_by_theme: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for resolved in cards {
@@ -195,8 +183,6 @@ fn aggregate(lines: Vec<DecklistLine>) -> Vec<DecklistLine> {
     merged
 }
 
-/// Une Carte de terrain de base : exclue du singleton, et du `deck` envoyé à
-/// Recommander (voir ADR 0003, "Decklist sans terrains de base").
 pub(crate) fn is_basic_land(card: &crate::model::Card) -> bool {
     card.supertypes.iter().any(|t| t == "Basic") && card.types.iter().any(|t| t == "Land")
 }
@@ -373,11 +359,6 @@ mod tests {
         assert_eq!(result.role_counts.get("ramp"), Some(&1));
     }
 
-    /// Base cartes dédiée aux tests de seuil de Thème majeur : un Commandant
-    /// (Atraxa, GWUB) et un pool de Cartes tribales Goblin (dans l'Identité
-    /// de couleur, légales Commander, absentes du Deck), pour vérifier que
-    /// "tribal:Goblin" ne génère de Candidat que lorsqu'il est porté par au
-    /// moins `MAJOR_THEME_MIN_CARDS` Cartes du Deck.
     fn fixture_db_with_goblin_pool(goblins_in_deck: u32) -> (tempfile::TempDir, CardsDb, String) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("AllPrintings.sqlite");
@@ -458,9 +439,6 @@ mod tests {
         assert_eq!(raider.matched_themes, vec!["tribal:Goblin".to_string()]);
     }
 
-    /// Reproduit le bug de revue sur #36 : un Commandant Gobelin ne doit pas
-    /// être compté dans le seuil de Thème majeur, qui ne porte que sur les
-    /// Cartes du Deck (voir CONTEXT.md, entrée Thème majeur).
     #[test]
     fn the_commander_does_not_count_towards_the_major_theme_threshold() {
         let dir = tempfile::tempdir().unwrap();
@@ -490,9 +468,7 @@ mod tests {
         )
         .unwrap();
 
-        // 7 Gobelins dans le Deck : sous le seuil de 8. Si le Commandant
-        // (aussi un Gobelin) était compté, le total atteindrait 8 et
-        // "tribal:Goblin" deviendrait à tort un Thème majeur.
+        // 7 Gobelins + le Commandant Gobelin : 8 si le Commandant était compté.
         let mut deck_lines = String::new();
         for i in 0..7 {
             let uuid = format!("goblin-deck-{i}");

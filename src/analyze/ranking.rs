@@ -1,8 +1,5 @@
 use std::cmp::Ordering;
 
-/// Trie `items` par score décroissant puis par nom croissant en cas d'égalité
-/// (ordre stable et déterministe partagé par les Candidats et les
-/// Recommandations externes EDHREC/Recommander).
 pub fn sort_desc_by_score_then_name<T>(
     items: &mut [T],
     score: impl Fn(&T) -> f64,

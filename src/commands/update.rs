@@ -31,9 +31,6 @@ enum SwapOutcome {
     Updated(String),
 }
 
-/// Compare la version du fichier téléchargé (`tmp_path`) à celle en place
-/// (`final_path`, si elle existe), puis remplace atomiquement ou nettoie le
-/// `.tmp` selon le cas.
 fn swap_if_newer(tmp_path: &Path, final_path: &Path) -> Result<SwapOutcome> {
     let new_version = read_meta_version(tmp_path)
         .with_context(|| "le fichier téléchargé n'est pas une base cartes MTGJSON valide")?;

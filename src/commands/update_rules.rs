@@ -21,8 +21,7 @@ pub fn run(source_url: Option<String>) -> Result<()> {
         .text()
         .context("lecture du corps de la réponse")?;
 
-    // Le document Wizards est en CRLF avec BOM UTF-8 ; on normalise avant
-    // de découper sur des motifs "\n...\n".
+    // Le document Wizards est en CRLF avec BOM UTF-8.
     let full_text = full_text
         .trim_start_matches('\u{feff}')
         .replace("\r\n", "\n");
@@ -62,7 +61,6 @@ pub fn run(source_url: Option<String>) -> Result<()> {
         &rules,
         &glossary,
     )?;
-    // Valide que la base construite s'ouvre correctement avant le swap.
     RulesDb::open(&tmp_path)
         .with_context(|| "la base règles nouvellement construite est invalide")?;
     atomic_swap(&tmp_path, &final_path)?;

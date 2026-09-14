@@ -11,29 +11,17 @@ pub fn is_land(card: &Card) -> bool {
     card.types.iter().any(|t| t == "Land")
 }
 
-/// Rôles détectés par motifs sur le texte oracle, la ligne de type et les
-/// Keywords. Une Carte peut porter 0..n Rôles.
 pub fn detect_roles(card: &Card) -> Vec<String> {
     static RAMP_LAND_SEARCH: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?i)search your library for a .*land").unwrap());
-    // Couvre "Add {G}", "Add an amount of {G} equal to …", "Add X mana of
-    // any one color", "Add one mana of any color in your commander's color
-    // identity", "Add X mana in any combination of colors", etc. : on
-    // cherche "add" suivi, dans la même phrase, d'un symbole de mana ou du
-    // mot "mana".
     static MANA_ABILITY: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?i)add\b[^.]*(mana|\{)").unwrap());
-    // Couvre "Draw two cards", "Draw cards equal to …", "draw X cards",
-    // "you may draw that many cards", "draw two additional cards".
     static DRAW: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
             r"(?i)draws? (cards? equal to|that many cards?|x cards?|(a|an|one|two|three|four|five|\d+)( additional)? cards?)",
         )
         .unwrap()
     });
-    // Couvre "Destroy target creature", "Exile target artifact", "Destroy up
-    // to two target artifacts and/or enchantments", "Destroy X target
-    // nonland permanents".
     static TARGETED_REMOVAL: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
             r"(?i)((destroy|exile)( up to)?( (one|two|three|four|five|x|\d+))? target|target creature gets -\d)",
@@ -77,9 +65,7 @@ pub fn detect_roles(card: &Card) -> Vec<String> {
     roles
 }
 
-/// Courbe de mana (hors terrains) : histogramme par mana value entière
-/// (0..6, "7" regroupant 7 et plus) et mana value moyenne, pondérées par
-/// quantité.
+/// Hors terrains ; le bucket 7 regroupe 7 et plus.
 pub fn mana_curve(cards: &[ResolvedCard]) -> ManaCurve {
     let mut counts: BTreeMap<u32, u32> = BTreeMap::new();
     let mut weighted_total = 0.0;
@@ -112,9 +98,7 @@ pub fn mana_curve(cards: &[ResolvedCard]) -> ManaCurve {
     }
 }
 
-/// Symboles de couleur d'un coût de mana (ex. "{2}{W}{W}" -> W: 2), les
-/// symboles hybrides comptant pour chacune de leurs couleurs (ex.
-/// "{W/U}" compte pour W et pour U).
+/// Un symbole hybride "{W/U}" compte pour W et pour U.
 pub fn count_color_symbols(mana_cost: &str, counts: &mut BTreeMap<String, u32>) {
     static SYMBOL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{([^}]+)\}").unwrap());
     for caps in SYMBOL.captures_iter(mana_cost) {
@@ -127,38 +111,22 @@ pub fn count_color_symbols(mana_cost: &str, counts: &mut BTreeMap<String, u32>) 
     }
 }
 
-/// Sources de mana coloré parmi les terrains : détecte tous les symboles de
-/// mana coloré cités dans les clauses "Add ..." du texte oracle d'un
-/// terrain, quel que soit leur nombre ou leur position (ex. "Add {B} or
-/// {G}.", "Add {B}{G}.", "Add {B}{B}, {B}{G}, or {G}{G}.").
 fn land_color_sources(
     card: &Card,
     quantity: u32,
     commander_color_identity: &[String],
     counts: &mut BTreeMap<String, u32>,
 ) {
-    // Capture chaque symbole "{X}" qui suit un "Add" sur la même ligne, en
-    // s'arrêtant à la fin de la phrase ("." ou ";") pour ne pas déborder sur
-    // une clause suivante sans rapport.
     static ADD_CLAUSE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)add ([^.;]*)").unwrap());
     static SYMBOL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{([^}]+)\}").unwrap());
-    // "Add one mana of any color in your commander's color identity"
-    // (Command Tower…) : borné à l'Identité de couleur du Commandant.
     static ADD_ANY_COLOR_COLOR_IDENTITY: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?i)add (one|a) mana of any color in your commander'?s? color identity")
             .unwrap()
     });
-    // "Add one mana of any color" sans référence à l'Identité de couleur
-    // (Exotic Orchard, terrains dépendant des terrains adverses…) : on ne
-    // peut pas savoir ce que l'adversaire contrôle, donc on garde les 5
-    // couleurs.
+    // Sans référence à l'Identité de couleur (Exotic Orchard…) : les 5 couleurs.
     static ADD_ANY_COLOR: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?i)add (one|a) mana of any color").unwrap());
     let text = card.oracle_text.as_deref().unwrap_or("");
-    // Une même Carte peut mentionner plusieurs fois "Add {X}" (une par
-    // symbole alternatif) et chaque clause peut citer plusieurs symboles
-    // (ex. "Add {B}{G}") : on ne compte chaque couleur qu'une fois par
-    // Impression, multiplié par la quantité en Deck.
     let mut colors_seen = std::collections::HashSet::new();
     for add_caps in ADD_CLAUSE.captures_iter(text) {
         let clause = add_caps.get(1).unwrap().as_str();
@@ -185,9 +153,6 @@ fn land_color_sources(
     }
 }
 
-/// Base de mana : nombre de terrains, sources par couleur (parmi les
-/// terrains), et symboles de couleur demandés par le reste du Deck (Cartes
-/// non-terrain + Commandant).
 pub fn mana_base(cards: &[ResolvedCard], commander: &Card) -> ManaBase {
     let mut land_count = 0u32;
     let mut sources_by_color: BTreeMap<String, u32> = BTreeMap::new();
@@ -224,11 +189,8 @@ pub struct Thresholds {
     pub min_draw: u32,
     pub min_removal: u32,
     pub min_wipe: u32,
-    /// Mana value moyenne (hors terrains) au-delà de laquelle la courbe est
-    /// jugée trop chère.
     pub max_average_mana_value: f64,
-    /// Nombre de Cartes à mana value ≥ 6 (hors terrains) au-delà duquel la
-    /// courbe est jugée déséquilibrée vers le haut.
+    /// Nombre max de Cartes à mana value ≥ `HIGH_COST_MANA_VALUE`.
     pub max_high_cost_cards: u32,
 }
 
@@ -248,9 +210,6 @@ impl Default for Thresholds {
 
 const HIGH_COST_MANA_VALUE: u32 = 6;
 
-/// Points faibles liés à une courbe de mana déséquilibrée : mana value
-/// moyenne trop haute, ou trop de Cartes très chères, par comparaison à des
-/// seuils configurables.
 pub fn curve_weaknesses(curve: &ManaCurve, thresholds: &Thresholds) -> Vec<String> {
     let mut weaknesses = Vec::new();
 
@@ -289,9 +248,6 @@ fn role_thresholds(thresholds: &Thresholds) -> [(&'static str, &'static str, u32
     ]
 }
 
-/// Noms des Rôles sous-représentés par rapport aux seuils configurables
-/// (hors base de mana, qui n'est pas un Rôle) : utilisé pour classer les
-/// candidats aux Suggestions par Rôle en Point faible.
 pub fn weak_role_names(
     role_counts: &BTreeMap<String, u32>,
     thresholds: &Thresholds,
@@ -303,8 +259,6 @@ pub fn weak_role_names(
         .collect()
 }
 
-/// Points faibles liés aux Rôles sous-représentés et à une base de mana
-/// insuffisante, par comparaison à des seuils configurables.
 pub fn role_weaknesses(
     role_counts: &BTreeMap<String, u32>,
     land_count: u32,

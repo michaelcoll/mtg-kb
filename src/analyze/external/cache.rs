@@ -1,6 +1,5 @@
-//! Cache EDHREC (voir ADR 0003) : une réponse par slug de Commandant, sous
+//! Cache EDHREC : une réponse par slug de Commandant, sous
 //! `<cache_dir>/<slug>.json`, réutilisée tant qu'elle a moins de `ttl`.
-//! Recommander n'a pas de cache : sa réponse dépend de la Decklist complète.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -9,10 +8,8 @@ use anyhow::{Context, Result};
 
 use super::edhrec::EdhrecClient;
 
-/// Sert le contenu en cache pour `slug` s'il a moins de `ttl`, sinon
-/// interroge `client` et rafraîchit le cache. La fraîcheur est décidée par
-/// la date de modification du fichier (`mtime`), plus simple qu'un horodatage
-/// embarqué dans le JSON mis en cache.
+/// Sert le contenu en cache pour `slug` si son `mtime` a moins de `ttl`,
+/// sinon interroge `client` et rafraîchit le cache.
 pub fn cached_fetch(
     client: &dyn EdhrecClient,
     cache_dir: &Path,
