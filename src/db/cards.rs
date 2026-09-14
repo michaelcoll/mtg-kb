@@ -256,29 +256,27 @@ impl CardsDb {
 
     /// Légalité en Commander d'une Carte par nom oracle exact. `None` si la
     /// Carte n'existe pas dans la Base cartes.
+    ///
+    /// `cardLegalities` contient une ligne par Impression (uuid) d'une même
+    /// Carte, et certaines Impressions (promos notamment) n'ont pas de
+    /// légalité renseignée (`commander` à NULL) alors que d'autres
+    /// Impressions de la même Carte sont bien légales. On considère donc la
+    /// Carte légale dès qu'**au moins une** Impression l'est, plutôt que de
+    /// se fier à une seule ligne arbitraire (`LIMIT 1` sans `ORDER BY`).
     pub fn is_legal_commander(&self, name: &str) -> Result<Option<bool>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT cl.commander FROM cards c \
-             JOIN cardLegalities cl ON cl.uuid = c.uuid \
-             WHERE c.name = ?1 LIMIT 1",
-        )?;
-        let mut rows = stmt.query([name])?;
-        match rows.next()? {
-            Some(row) => {
-                let legality: Option<String> = row.get(0)?;
-                Ok(Some(legality.as_deref() == Some("Legal")))
-            }
-            None => {
-                // La Carte peut exister sans ligne cardLegalities associée
-                // (rare, mais possible pour des impressions promo). On
-                // distingue "carte inconnue" de "légalité absente".
-                if self.card_by_name(name)?.is_some() {
-                    Ok(Some(false))
-                } else {
-                    Ok(None)
-                }
-            }
+        if self.card_by_name(name)?.is_none() {
+            return Ok(None);
         }
+
+        let mut stmt = self.conn.prepare(
+            "SELECT EXISTS( \
+                 SELECT 1 FROM cards c \
+                 JOIN cardLegalities cl ON cl.uuid = c.uuid \
+                 WHERE c.name = ?1 AND cl.commander = 'Legal' \
+             )",
+        )?;
+        let legal: bool = stmt.query_row([name], |row| row.get(0))?;
+        Ok(Some(legal))
     }
 
     /// Résout l'Impression de référence d'une Carte (voir CONTEXT.md) : la
@@ -378,11 +376,23 @@ mod tests {
                 'oversized-only', 'Oversized Test Card', NULL, 0.0, 'Land', 'Land', NULL, NULL,
                 NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'OSIZ', '1', 'paper', 0, 1, 0
             );
+            INSERT INTO cards VALUES (
+                'sylvan-5ed', 'Sylvan Library', '{G}', 1.0, 'Enchantment', 'Enchantment', NULL,
+                NULL, 'At the beginning of your draw step, draw two additional cards.',
+                'G', 'G', NULL, NULL, NULL, NULL, '5ED', '1', 'paper', 0, 0, 0
+            );
+            INSERT INTO cards VALUES (
+                'sylvan-ptc', 'Sylvan Library', '{G}', 1.0, 'Enchantment', 'Enchantment', NULL,
+                NULL, 'At the beginning of your draw step, draw two additional cards.',
+                'G', 'G', NULL, NULL, NULL, NULL, 'PTC', '1', 'paper', 1, 0, 0
+            );
 
             INSERT INTO cardLegalities VALUES ('sol-lea', 'Legal', 'Legal');
             INSERT INTO cardLegalities VALUES ('sol-c21', 'Legal', 'Legal');
             INSERT INTO cardLegalities VALUES ('atraxa', 'Legal', '');
             INSERT INTO cardLegalities VALUES ('llanowar', 'Legal', 'Legal');
+            INSERT INTO cardLegalities VALUES ('sylvan-5ed', 'Legal', '');
+            INSERT INTO cardLegalities VALUES ('sylvan-ptc', NULL, NULL);
 
             INSERT INTO cardRulings VALUES ('atraxa', '2023-02-04', 'Proliferate ruling one.');
             INSERT INTO cardRulings VALUES ('atraxa', '2023-02-04', 'Proliferate ruling two.');
@@ -447,6 +457,20 @@ mod tests {
         let (_dir, path) = fixture_db();
         let db = CardsDb::open(&path).unwrap();
         assert_eq!(db.is_legal_commander("Nope").unwrap(), None);
+    }
+
+    /// Régression #35 : Sylvan Library a une Impression papier légale
+    /// (5ED) et une Impression promo (PTC) sans légalité renseignée
+    /// (`commander` NULL). La Carte doit rester légale dès qu'une seule
+    /// Impression l'est, peu importe l'ordre de retour des lignes SQL.
+    #[test]
+    fn is_legal_commander_true_when_any_printing_is_legal() {
+        let (_dir, path) = fixture_db();
+        let db = CardsDb::open(&path).unwrap();
+        assert_eq!(
+            db.is_legal_commander("Sylvan Library").unwrap(),
+            Some(true)
+        );
     }
 
     #[test]
@@ -563,12 +587,14 @@ mod tests {
             })
             .unwrap();
         // Toutes les Cartes légales Commander de la fixture, sans plafond ni
-        // troncature : Sol Ring (dédoublonné), Atraxa, Llanowar Elves.
+        // troncature : Sol Ring (dédoublonné), Atraxa, Llanowar Elves,
+        // Sylvan Library (dédoublonnée, légale via son Impression 5ED).
         let names: Vec<_> = results.iter().map(|c| c.name.as_str()).collect();
         assert!(names.contains(&"Sol Ring"));
         assert!(names.contains(&"Atraxa, Praetors' Voice"));
         assert!(names.contains(&"Llanowar Elves"));
-        assert_eq!(results.len(), 3);
+        assert!(names.contains(&"Sylvan Library"));
+        assert_eq!(results.len(), 4);
     }
 
     #[test]
