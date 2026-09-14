@@ -110,30 +110,57 @@ pub fn count_color_symbols(mana_cost: &str, counts: &mut BTreeMap<String, u32>) 
     }
 }
 
-/// Sources de mana coloré parmi les terrains : détecte "Add {X}" dans le
-/// texte oracle d'un terrain.
-fn land_color_sources(card: &Card, quantity: u32, counts: &mut BTreeMap<String, u32>) {
-    static ADD_SYMBOL: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"[Aa]dd \{([^}]+)\}").unwrap());
-    // Motif "Add one mana of any color" (Command Tower, Exotic Orchard,
-    // filter lands…) : ne cite pas de symbole précis mais produit les 5
+/// Sources de mana coloré parmi les terrains : détecte tous les symboles de
+/// mana coloré cités dans les clauses "Add ..." du texte oracle d'un
+/// terrain, quel que soit leur nombre ou leur position (ex. "Add {B} or
+/// {G}.", "Add {B}{G}.", "Add {B}{B}, {B}{G}, or {G}{G}.").
+fn land_color_sources(
+    card: &Card,
+    quantity: u32,
+    commander_color_identity: &[String],
+    counts: &mut BTreeMap<String, u32>,
+) {
+    // Capture chaque symbole "{X}" qui suit un "Add" sur la même ligne, en
+    // s'arrêtant à la fin de la phrase ("." ou ";") pour ne pas déborder sur
+    // une clause suivante sans rapport.
+    static ADD_CLAUSE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)add ([^.;]*)").unwrap());
+    static SYMBOL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{([^}]+)\}").unwrap());
+    // "Add one mana of any color in your commander's color identity"
+    // (Command Tower…) : borné à l'Identité de couleur du Commandant.
+    static ADD_ANY_COLOR_COLOR_IDENTITY: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)add (one|a) mana of any color in your commander'?s? color identity")
+            .unwrap()
+    });
+    // "Add one mana of any color" sans référence à l'Identité de couleur
+    // (Exotic Orchard, terrains dépendant des terrains adverses…) : on ne
+    // peut pas savoir ce que l'adversaire contrôle, donc on garde les 5
     // couleurs.
     static ADD_ANY_COLOR: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?i)add (one|a) mana of any color").unwrap());
     let text = card.oracle_text.as_deref().unwrap_or("");
     // Une même Carte peut mentionner plusieurs fois "Add {X}" (une par
-    // symbole alternatif) : on ne compte chaque couleur qu'une fois par
+    // symbole alternatif) et chaque clause peut citer plusieurs symboles
+    // (ex. "Add {B}{G}") : on ne compte chaque couleur qu'une fois par
     // Impression, multiplié par la quantité en Deck.
     let mut colors_seen = std::collections::HashSet::new();
-    for caps in ADD_SYMBOL.captures_iter(text) {
-        let symbol = caps.get(1).unwrap().as_str();
-        for color in COLORS {
-            if symbol.contains(color) {
-                colors_seen.insert(color);
+    for add_caps in ADD_CLAUSE.captures_iter(text) {
+        let clause = add_caps.get(1).unwrap().as_str();
+        for symbol_caps in SYMBOL.captures_iter(clause) {
+            let symbol = symbol_caps.get(1).unwrap().as_str();
+            for color in COLORS {
+                if symbol.contains(color) {
+                    colors_seen.insert(color);
+                }
             }
         }
     }
-    if ADD_ANY_COLOR.is_match(text) {
+    if ADD_ANY_COLOR_COLOR_IDENTITY.is_match(text) {
+        for color in COLORS {
+            if commander_color_identity.iter().any(|c| c == color) {
+                colors_seen.insert(color);
+            }
+        }
+    } else if ADD_ANY_COLOR.is_match(text) {
         colors_seen.extend(COLORS);
     }
     for color in colors_seen {
@@ -152,7 +179,12 @@ pub fn mana_base(cards: &[ResolvedCard], commander: &Card) -> ManaBase {
     for resolved in cards {
         if is_land(&resolved.card) {
             land_count += resolved.quantity;
-            land_color_sources(&resolved.card, resolved.quantity, &mut sources_by_color);
+            land_color_sources(
+                &resolved.card,
+                resolved.quantity,
+                &commander.color_identity,
+                &mut sources_by_color,
+            );
         } else if let Some(cost) = &resolved.card.mana_cost {
             count_color_symbols(cost, &mut symbols_by_color);
         }
@@ -403,10 +435,112 @@ mod tests {
             &["Land"],
             None,
         );
-        land_color_sources(&command_tower, 1, &mut counts);
+        let identity: Vec<String> = COLORS.iter().map(|c| c.to_string()).collect();
+        land_color_sources(&command_tower, 1, &identity, &mut counts);
         for color in COLORS {
             assert_eq!(counts.get(color), Some(&1), "missing color {color}");
         }
+    }
+
+    #[test]
+    fn command_tower_bounded_to_commander_color_identity() {
+        let mut counts = BTreeMap::new();
+        let command_tower = card(
+            "Command Tower",
+            "{T}: Add one mana of any color in your commander's color identity.",
+            &["Land"],
+            None,
+        );
+        let identity = vec!["B".to_string(), "G".to_string()];
+        land_color_sources(&command_tower, 1, &identity, &mut counts);
+        assert_eq!(counts.get("B"), Some(&1));
+        assert_eq!(counts.get("G"), Some(&1));
+        assert_eq!(counts.get("R"), None);
+        assert_eq!(counts.get("U"), None);
+        assert_eq!(counts.get("W"), None);
+    }
+
+    #[test]
+    fn exotic_orchard_style_any_color_stays_five_colors_regardless_of_identity() {
+        let mut counts = BTreeMap::new();
+        let exotic_orchard = card(
+            "Exotic Orchard",
+            "{T}: Add one mana of any color that a land an opponent controls could produce.",
+            &["Land"],
+            None,
+        );
+        let identity = vec!["B".to_string(), "G".to_string()];
+        land_color_sources(&exotic_orchard, 1, &identity, &mut counts);
+        for color in COLORS {
+            assert_eq!(counts.get(color), Some(&1), "missing color {color}");
+        }
+    }
+
+    #[test]
+    fn dual_land_with_or_text_counts_both_colors() {
+        let mut counts = BTreeMap::new();
+        let overgrown_tomb = card("Overgrown Tomb", "{T}: Add {B} or {G}.", &["Land"], None);
+        let identity = vec!["B".to_string(), "G".to_string()];
+        land_color_sources(&overgrown_tomb, 1, &identity, &mut counts);
+        assert_eq!(counts.get("B"), Some(&1));
+        assert_eq!(counts.get("G"), Some(&1));
+        assert_eq!(counts.get("R"), None);
+    }
+
+    #[test]
+    fn viridescent_bog_style_add_multi_symbol_counts_once_per_color() {
+        let mut counts = BTreeMap::new();
+        let viridescent_bog = card("Viridescent Bog", "{T}: Add {B}{G}.", &["Land"], None);
+        let identity = vec!["B".to_string(), "G".to_string()];
+        land_color_sources(&viridescent_bog, 1, &identity, &mut counts);
+        assert_eq!(counts.get("B"), Some(&1));
+        assert_eq!(counts.get("G"), Some(&1));
+    }
+
+    #[test]
+    fn twilight_mire_style_triple_option_counts_both_colors_once() {
+        let mut counts = BTreeMap::new();
+        let twilight_mire = card(
+            "Twilight Mire",
+            "{T}: Add {B}{B}, {B}{G}, or {G}{G}.",
+            &["Land"],
+            None,
+        );
+        let identity = vec!["B".to_string(), "G".to_string()];
+        land_color_sources(&twilight_mire, 1, &identity, &mut counts);
+        assert_eq!(counts.get("B"), Some(&1));
+        assert_eq!(counts.get("G"), Some(&1));
+        assert_eq!(counts.get("R"), None);
+    }
+
+    #[test]
+    fn mana_base_bicolor_deck_has_no_off_color_sources_and_correct_dual_land_counts() {
+        let overgrown_tomb = ResolvedCard {
+            quantity: 1,
+            roles: vec![],
+            themes: vec![],
+            card: card("Overgrown Tomb", "{T}: Add {B} or {G}.", &["Land"], None),
+        };
+        let forest = ResolvedCard {
+            quantity: 10,
+            roles: vec![],
+            themes: vec![],
+            card: card("Forest", "{T}: Add {G}.", &["Basic", "Land"], None),
+        };
+        let swamp = ResolvedCard {
+            quantity: 10,
+            roles: vec![],
+            themes: vec![],
+            card: card("Swamp", "{T}: Add {B}.", &["Basic", "Land"], None),
+        };
+        let mut commander = card("Dina, Essence Brewer", "", &["Creature"], Some("{2}{B}{G}"));
+        commander.color_identity = vec!["B".to_string(), "G".to_string()];
+        let base = mana_base(&[overgrown_tomb, forest, swamp], &commander);
+        assert_eq!(base.sources_by_color.get("B"), Some(&11));
+        assert_eq!(base.sources_by_color.get("G"), Some(&11));
+        assert_eq!(base.sources_by_color.get("R"), None);
+        assert_eq!(base.sources_by_color.get("U"), None);
+        assert_eq!(base.sources_by_color.get("W"), None);
     }
 
     #[test]
