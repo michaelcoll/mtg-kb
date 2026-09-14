@@ -50,6 +50,11 @@
     .suggestion-art img { width: 44px; }
     .card-to-remove-art img { width: 26px; }
   }
+  a { color: var(--accent); }
+  .hover-target { cursor: pointer; }
+  .hover-preview { position: fixed; z-index: 1000; display: flex; gap: 0.5rem; pointer-events: none; }
+  .hover-preview[hidden] { display: none; }
+  .hover-preview-face { display: block; width: 240px; border-radius: 12px; border: 1px solid var(--border); box-shadow: 0 8px 24px rgba(0,0,0,0.55); }
 </style>
 </head>
 <body>
@@ -124,5 +129,67 @@
     <ul><li>&lt;script&gt;alert(1)&lt;/script&gt; x1</li></ul>
   </section>
 </main>
+  <div id="hover-preview" class="hover-preview" hidden>
+    <img class="hover-preview-face" alt="">
+  </div>
+  <script>
+  (function () {
+    var preview = document.getElementById('hover-preview');
+    var img = preview.querySelector('.hover-preview-face');
+    var margin = 8;
+
+    function hide() {
+      preview.hidden = true;
+    }
+
+    function position(target) {
+      var rect = target.getBoundingClientRect();
+      preview.style.left = '0px';
+      preview.style.top = '0px';
+      var pw = preview.offsetWidth;
+      var ph = preview.offsetHeight;
+      var left = rect.right + margin;
+      if (left + pw > window.innerWidth - margin) {
+        left = rect.left - margin - pw;
+      }
+      if (left < margin) {
+        left = Math.min(window.innerWidth - pw - margin, Math.max(margin, rect.left));
+      }
+      var top = rect.top;
+      if (top + ph > window.innerHeight - margin) {
+        top = window.innerHeight - margin - ph;
+      }
+      if (top < margin) {
+        top = margin;
+      }
+      preview.style.left = left + 'px';
+      preview.style.top = top + 'px';
+    }
+
+    function show(target) {
+      var src = target.getAttribute('data-hover-img');
+      if (!src) {
+        return;
+      }
+      if (img.src !== src) {
+        img.src = src;
+      }
+      preview.hidden = false;
+      position(target);
+    }
+
+    img.addEventListener('error', hide);
+    document.querySelectorAll('.hover-target').forEach(function (el) {
+      el.addEventListener('mouseenter', function () {
+        show(el);
+      });
+      el.addEventListener('mouseleave', hide);
+      el.addEventListener('focus', function () {
+        show(el);
+      });
+      el.addEventListener('blur', hide);
+    });
+  })();
+  </script>
 </body>
 </html>

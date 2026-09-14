@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::model::{
     EdhrecRecommendation, EnrichedAnalysis, ManaBase, ManaCurve, RecommanderRecommendation,
@@ -7,6 +7,13 @@ use crate::model::{
 
 pub mod origins;
 pub mod validate;
+
+/// Impressions de référence des Cartes citées par leur seul nom dans le
+/// Rapport (Synergies, annexe des Recommandations externes non retenues) :
+/// pas de vignette statique pour ces Cartes, seulement un lien Scryfall qui
+/// s'agrandit au survol/focus (voir `hover_card_link`). Clé = nom de Carte
+/// tel qu'il apparaît dans l'analyse enrichie.
+pub type CardPrintings = HashMap<String, ReferencePrinting>;
 
 /// Nom de fichier "slug" dérivé du nom du Commandant : minuscules,
 /// caractères non alphanumériques réduits à des tirets simples.
@@ -111,10 +118,89 @@ fn render_head(commander_name: &str) -> String {
     .suggestion-art img {{ width: 44px; }}
     .card-to-remove-art img {{ width: 26px; }}
   }}
+  a {{ color: var(--accent); }}
+  .hover-target {{ cursor: pointer; }}
+  .hover-preview {{ position: fixed; z-index: 1000; display: flex; gap: 0.5rem; pointer-events: none; }}
+  .hover-preview[hidden] {{ display: none; }}
+  .hover-preview-face {{ display: block; width: 240px; border-radius: 12px; border: 1px solid var(--border); box-shadow: 0 8px 24px rgba(0,0,0,0.55); }}
 </style>
 </head>
 "#
     )
+}
+
+/// Vignette agrandie partagée, positionnée près de l'élément survolé/ciblé
+/// par le focus clavier (voir le script en pied de page) et recalée pour
+/// rester entièrement visible dans la fenêtre. Un seul visage pour l'instant
+/// (issue #55) ; #56 ajoutera un second `<img class="hover-preview-face">`
+/// ici pour afficher les deux Faces d'une Carte double-face côte à côte —
+/// c'est pourquoi l'image est déjà isolée dans son propre conteneur plutôt
+/// que directement dans `#hover-preview`.
+fn render_hover_preview_markup() -> String {
+    r#"  <div id="hover-preview" class="hover-preview" hidden>
+    <img class="hover-preview-face" alt="">
+  </div>
+  <script>
+  (function () {
+    var preview = document.getElementById('hover-preview');
+    var img = preview.querySelector('.hover-preview-face');
+    var margin = 8;
+
+    function hide() {
+      preview.hidden = true;
+    }
+
+    function position(target) {
+      var rect = target.getBoundingClientRect();
+      preview.style.left = '0px';
+      preview.style.top = '0px';
+      var pw = preview.offsetWidth;
+      var ph = preview.offsetHeight;
+      var left = rect.right + margin;
+      if (left + pw > window.innerWidth - margin) {
+        left = rect.left - margin - pw;
+      }
+      if (left < margin) {
+        left = Math.min(window.innerWidth - pw - margin, Math.max(margin, rect.left));
+      }
+      var top = rect.top;
+      if (top + ph > window.innerHeight - margin) {
+        top = window.innerHeight - margin - ph;
+      }
+      if (top < margin) {
+        top = margin;
+      }
+      preview.style.left = left + 'px';
+      preview.style.top = top + 'px';
+    }
+
+    function show(target) {
+      var src = target.getAttribute('data-hover-img');
+      if (!src) {
+        return;
+      }
+      if (img.src !== src) {
+        img.src = src;
+      }
+      preview.hidden = false;
+      position(target);
+    }
+
+    img.addEventListener('error', hide);
+    document.querySelectorAll('.hover-target').forEach(function (el) {
+      el.addEventListener('mouseenter', function () {
+        show(el);
+      });
+      el.addEventListener('mouseleave', hide);
+      el.addEventListener('focus', function () {
+        show(el);
+      });
+      el.addEventListener('blur', hide);
+    });
+  })();
+  </script>
+"#
+    .to_string()
 }
 
 /// Portrait d'une Carte depuis l'endpoint officiel Scryfall, avec lien vers
@@ -129,14 +215,34 @@ fn render_card_art(name: &str, printing: Option<&ReferencePrinting>, css_class: 
     let scryfall_id = &printing.scryfall_id;
     let set_code = printing.set_code.to_lowercase();
     let number = &printing.number;
+    let image_url =
+        format!("https://api.scryfall.com/cards/{scryfall_id}?format=image&amp;version=normal");
     format!(
         r#"<span class="{css_class}">
-    <a href="https://scryfall.com/card/{set_code}/{number}" target="_blank" rel="noopener">
-      <img src="https://api.scryfall.com/cards/{scryfall_id}?format=image&amp;version=normal" alt="{name}" onerror="this.hidden=true;this.nextElementSibling.hidden=false;">
+    <a href="https://scryfall.com/card/{set_code}/{number}" target="_blank" rel="noopener" class="hover-target" data-hover-img="{image_url}">
+      <img src="{image_url}" alt="{name}" onerror="this.hidden=true;this.nextElementSibling.hidden=false;">
     </a>
     <span class="{css_class}-fallback muted" hidden>{name}</span>
   </span>
   "#
+    )
+}
+
+/// Nom de Carte cliquable vers sa page Scryfall, avec le même mécanisme
+/// d'agrandissement au survol/focus que les vignettes (`render_card_art`),
+/// mais sans image statique : utilisé là où seul le nom est affiché
+/// (Synergies, annexe). Texte brut, sans lien, si aucune Impression de
+/// référence n'est connue — même repli que les vignettes.
+fn hover_card_link(name: &str, printing: Option<&ReferencePrinting>) -> String {
+    let escaped = escape_html(name);
+    let Some(printing) = printing else {
+        return escaped;
+    };
+    let scryfall_id = &printing.scryfall_id;
+    let set_code = printing.set_code.to_lowercase();
+    let number = &printing.number;
+    format!(
+        r#"<a href="https://scryfall.com/card/{set_code}/{number}" target="_blank" rel="noopener" class="hover-target" data-hover-img="https://api.scryfall.com/cards/{scryfall_id}?format=image&amp;version=normal">{escaped}</a>"#
     )
 }
 
@@ -259,14 +365,20 @@ fn render_weaknesses_section(weaknesses: &[String]) -> String {
     )
 }
 
-fn render_synergies_section(synergies: &[Synergy]) -> String {
+fn render_synergies_section(synergies: &[Synergy], card_printings: &CardPrintings) -> String {
     let synergy_items: String = synergies
         .iter()
         .map(|s| {
+            let cards: String = s
+                .cards
+                .iter()
+                .map(|c| hover_card_link(c, card_printings.get(c)))
+                .collect::<Vec<_>>()
+                .join(", ");
             format!(
                 "<li><strong>{}</strong> — {}</li>",
                 escape_html(&s.theme),
-                escape_html(&s.cards.join(", "))
+                cards
             )
         })
         .collect();
@@ -417,13 +529,18 @@ fn render_credits_section() -> String {
 fn render_unused_recommendations_list<T>(
     items: &[T],
     suggestion_names: &HashSet<&str>,
+    card_printings: &CardPrintings,
     card_name: impl Fn(&T) -> &str,
-    label: impl Fn(&T) -> String,
+    label: impl Fn(&T, &str) -> String,
 ) -> String {
     let list_items: String = items
         .iter()
         .filter(|r| !suggestion_names.contains(card_name(r)))
-        .map(|r| format!("<li>{}</li>", label(r)))
+        .map(|r| {
+            let name = card_name(r);
+            let name_html = hover_card_link(name, card_printings.get(name));
+            format!("<li>{}</li>", label(r, &name_html))
+        })
         .collect();
     if list_items.is_empty() {
         "<p class=\"muted\">Aucune.</p>".to_string()
@@ -436,18 +553,21 @@ fn render_external_appendix_section(
     edhrec_recommendations: &[EdhrecRecommendation],
     recommander_recommendations: &[RecommanderRecommendation],
     suggestion_names: &HashSet<&str>,
+    card_printings: &CardPrintings,
 ) -> String {
     let edhrec_html = render_unused_recommendations_list(
         edhrec_recommendations,
         suggestion_names,
+        card_printings,
         |r| r.card.name.as_str(),
-        |r| format!("{} (synergie {:.2})", escape_html(&r.card.name), r.synergy),
+        |r, name_html| format!("{name_html} (synergie {:.2})", r.synergy),
     );
     let recommander_html = render_unused_recommendations_list(
         recommander_recommendations,
         suggestion_names,
+        card_printings,
         |r| r.card.name.as_str(),
-        |r| format!("{} (score {:.2})", escape_html(&r.card.name), r.score),
+        |r, name_html| format!("{name_html} (score {:.2})", r.score),
     );
 
     format!(
@@ -498,6 +618,7 @@ pub fn render(
     enriched: &EnrichedAnalysis,
     commander_printing: Option<&ReferencePrinting>,
     suggestion_printings: &[SuggestionPrintings],
+    card_printings: &CardPrintings,
 ) -> String {
     let a = &enriched.analysis;
 
@@ -526,7 +647,7 @@ pub fn render(
     let mana_base = trimmed_with_newline(render_mana_base_section(&a.mana_base));
     let roles = trimmed_with_newline(render_roles_section(&a.role_counts));
     let weaknesses = trimmed_with_newline(render_weaknesses_section(&a.weaknesses));
-    let synergies = trimmed_with_newline(render_synergies_section(&a.synergies));
+    let synergies = trimmed_with_newline(render_synergies_section(&a.synergies, card_printings));
     let suggestions = trimmed_with_newline(render_suggestions_section(
         &enriched.suggestions,
         suggestion_printings,
@@ -540,12 +661,14 @@ pub fn render(
         &a.edhrec_recommendations,
         &a.recommander_recommendations,
         &suggestion_names,
+        card_printings,
     ));
     let credits = trimmed_with_newline(render_credits_section());
     let unresolved = render_unresolved_section(&a.unresolved);
+    let hover_preview = render_hover_preview_markup();
 
     format!(
-        "{head}<body>\n<main>\n  {header}\n{verdict}\n{source_errors}{mana_curve}\n{mana_base}\n{roles}\n{weaknesses}\n{synergies}\n{suggestions}\n{appendix}\n{credits}\n{unresolved}</main>\n</body>\n</html>\n"
+        "{head}<body>\n<main>\n  {header}\n{verdict}\n{source_errors}{mana_curve}\n{mana_base}\n{roles}\n{weaknesses}\n{synergies}\n{suggestions}\n{appendix}\n{credits}\n{unresolved}</main>\n{hover_preview}</body>\n</html>\n"
     )
 }
 
@@ -634,9 +757,13 @@ mod tests {
         vec![SuggestionPrintings::default()]
     }
 
+    fn no_card_printings() -> CardPrintings {
+        CardPrintings::new()
+    }
+
     #[test]
     fn renders_all_sections() {
-        let html = render(&sample(), None, &no_printings());
+        let html = render(&sample(), None, &no_printings(), &no_card_printings());
         assert!(html.contains("Atraxa, Praetors&#39; Voice"));
         assert!(html.contains("Solide, manque de ramp"));
         assert!(html.contains("Rampant Growth"));
@@ -647,7 +774,7 @@ mod tests {
 
     #[test]
     fn escapes_untrusted_content() {
-        let html = render(&sample(), None, &no_printings());
+        let html = render(&sample(), None, &no_printings(), &no_card_printings());
         assert!(!html.contains("<script>alert(1)</script>"));
         assert!(html.contains("&lt;script&gt;"));
     }
@@ -657,13 +784,13 @@ mod tests {
     /// évolutions volontaires (Verdict structuré, images Scryfall, ...).
     #[test]
     fn render_output_is_stable_across_the_section_split() {
-        let html = render(&sample(), None, &no_printings());
+        let html = render(&sample(), None, &no_printings(), &no_card_printings());
         assert_eq!(html, include_str!("golden_sample.html"));
     }
 
     #[test]
     fn renders_structured_verdict_sections() {
-        let html = render(&sample(), None, &no_printings());
+        let html = render(&sample(), None, &no_printings(), &no_card_printings());
         assert!(html.contains("Points forts"));
         assert!(html.contains("Base de mana solide"));
         assert!(html.contains("Faiblesses"));
@@ -677,7 +804,7 @@ mod tests {
     fn escapes_untrusted_content_in_verdict_lists() {
         let mut enriched = sample();
         enriched.verdict.strengths = vec!["<script>alert(1)</script>".to_string()];
-        let html = render(&enriched, None, &no_printings());
+        let html = render(&enriched, None, &no_printings(), &no_card_printings());
         assert!(!html.contains("<script>alert(1)</script>"));
         assert!(html.contains("&lt;script&gt;"));
     }
@@ -686,7 +813,7 @@ mod tests {
     fn renders_aucune_for_empty_verdict_priorities() {
         let mut enriched = sample();
         enriched.verdict.priorities = vec![];
-        let html = render(&enriched, None, &no_printings());
+        let html = render(&enriched, None, &no_printings(), &no_card_printings());
         assert!(html.contains("Aucune."));
     }
 
@@ -697,7 +824,12 @@ mod tests {
             set_code: "M15".to_string(),
             number: "4".to_string(),
         };
-        let html = render(&sample(), Some(&printing), &no_printings());
+        let html = render(
+            &sample(),
+            Some(&printing),
+            &no_printings(),
+            &no_card_printings(),
+        );
         assert!(
             html.contains("https://api.scryfall.com/cards/abc-123?format=image&amp;version=normal")
         );
@@ -706,7 +838,7 @@ mod tests {
 
     #[test]
     fn falls_back_to_name_when_no_reference_printing() {
-        let html = render(&sample(), None, &no_printings());
+        let html = render(&sample(), None, &no_printings(), &no_card_printings());
         assert!(!html.contains("scryfall.com"));
         assert!(html.contains("<h1>Atraxa, Praetors&#39; Voice</h1>"));
     }
@@ -723,7 +855,7 @@ mod tests {
             card_to_remove_printing: None,
             origins: vec![],
         }];
-        let html = render(&sample(), None, &printings);
+        let html = render(&sample(), None, &printings, &no_card_printings());
         assert!(
             html.contains("https://api.scryfall.com/cards/rg-123?format=image&amp;version=normal")
         );
@@ -734,14 +866,14 @@ mod tests {
 
     #[test]
     fn falls_back_to_name_for_a_suggestion_without_reference_printing() {
-        let html = render(&sample(), None, &no_printings());
+        let html = render(&sample(), None, &no_printings(), &no_card_printings());
         assert!(!html.contains("scryfall.com"));
         assert!(html.contains("Rampant Growth"));
     }
 
     #[test]
     fn renders_unchanged_without_a_card_to_remove() {
-        let html = render(&sample(), None, &no_printings());
+        let html = render(&sample(), None, &no_printings(), &no_card_printings());
         assert!(!html.contains("class=\"card-to-remove\""));
     }
 
@@ -759,7 +891,7 @@ mod tests {
             card_to_remove_printing: Some(printing),
             origins: vec![],
         }];
-        let html = render(&enriched, None, &printings);
+        let html = render(&enriched, None, &printings, &no_card_printings());
         assert!(html.contains("class=\"card-to-remove\""));
         assert!(html.contains("card-to-remove-art"));
         assert!(html.contains("Llanowar Elves"));
@@ -774,14 +906,14 @@ mod tests {
     fn escapes_untrusted_content_in_card_to_remove_name() {
         let mut enriched = sample();
         enriched.suggestions[0].card_to_remove = Some("<script>alert(1)</script>".to_string());
-        let html = render(&enriched, None, &no_printings());
+        let html = render(&enriched, None, &no_printings(), &no_card_printings());
         assert!(!html.contains("<script>alert(1)</script>"));
         assert!(html.contains("&lt;script&gt;"));
     }
 
     #[test]
     fn renders_no_warning_section_without_source_errors() {
-        let html = render(&sample(), None, &no_printings());
+        let html = render(&sample(), None, &no_printings(), &no_card_printings());
         assert!(!html.contains("Avertissement"));
     }
 
@@ -792,7 +924,7 @@ mod tests {
             source: "edhrec".to_string(),
             message: "HTTP 429".to_string(),
         }];
-        let html = render(&enriched, None, &no_printings());
+        let html = render(&enriched, None, &no_printings(), &no_card_printings());
         assert!(html.contains("Avertissement"));
         assert!(html.contains("edhrec"));
         assert!(html.contains("HTTP 429"));
@@ -800,7 +932,7 @@ mod tests {
 
     #[test]
     fn always_renders_credits_for_edhrec_and_recommander() {
-        let html = render(&sample(), None, &no_printings());
+        let html = render(&sample(), None, &no_printings(), &no_card_printings());
         assert!(html.contains("https://edhrec.com"));
         assert!(html.contains("https://recommander.cards"));
     }
@@ -829,7 +961,7 @@ mod tests {
             inclusion_rate: 0.9,
             header: "High Synergy Cards".to_string(),
         }];
-        let html = render(&enriched, None, &no_printings());
+        let html = render(&enriched, None, &no_printings(), &no_card_printings());
         assert!(html.contains("Recommandations externes non retenues"));
         assert!(html.contains("Sol Ring"));
         assert!(html.contains("0.42"));
@@ -861,7 +993,7 @@ mod tests {
         }];
         // "Rampant Growth" est déjà une Suggestion retenue (voir `sample()`) :
         // l'annexe ne doit pas la lister une seconde fois.
-        let html = render(&enriched, None, &no_printings());
+        let html = render(&enriched, None, &no_printings(), &no_card_printings());
         assert!(!html.contains("0.42"));
     }
 
@@ -872,9 +1004,104 @@ mod tests {
             card_to_remove_printing: None,
             origins: vec!["kb".to_string(), "edhrec".to_string()],
         }];
-        let html = render(&sample(), None, &printings);
+        let html = render(&sample(), None, &printings, &no_card_printings());
         assert!(html.contains("badge-origin"));
         assert!(html.contains(">kb<"));
         assert!(html.contains(">edhrec<"));
+    }
+
+    #[test]
+    fn renders_hover_preview_markup_once() {
+        let html = render(&sample(), None, &no_printings(), &no_card_printings());
+        assert!(html.contains(r#"<div id="hover-preview" class="hover-preview" hidden>"#));
+        assert!(html.contains(r#"<img class="hover-preview-face""#));
+        assert!(html.contains("data-hover-img"));
+        assert!(html.contains("addEventListener('mouseenter'"));
+        assert!(html.contains("addEventListener('focus'"));
+    }
+
+    #[test]
+    fn synergy_card_with_known_printing_becomes_a_hover_link() {
+        let mut card_printings = CardPrintings::new();
+        card_printings.insert(
+            "Krenko, Mob Boss".to_string(),
+            ReferencePrinting {
+                scryfall_id: "krenko-123".to_string(),
+                set_code: "C17".to_string(),
+                number: "12".to_string(),
+            },
+        );
+        let html = render(&sample(), None, &no_printings(), &card_printings);
+        assert!(html.contains(
+            r#"<a href="https://scryfall.com/card/c17/12" target="_blank" rel="noopener" class="hover-target" data-hover-img="https://api.scryfall.com/cards/krenko-123?format=image&amp;version=normal">Krenko, Mob Boss</a>"#
+        ));
+    }
+
+    #[test]
+    fn synergy_card_without_known_printing_stays_plain_text() {
+        let html = render(&sample(), None, &no_printings(), &no_card_printings());
+        assert!(html.contains("Krenko, Mob Boss"));
+        assert!(!html.contains(r#"data-hover-img="https://api.scryfall.com/cards/"#));
+    }
+
+    #[test]
+    fn appendix_card_with_known_printing_becomes_a_hover_link() {
+        let mut enriched = sample();
+        enriched.analysis.edhrec_recommendations = vec![EdhrecRecommendation {
+            card: Card {
+                name: "Sol Ring".to_string(),
+                mana_cost: None,
+                mana_value: None,
+                type_line: None,
+                types: vec![],
+                subtypes: vec![],
+                supertypes: vec![],
+                oracle_text: None,
+                color_identity: vec![],
+                colors: vec![],
+                keywords: vec![],
+                power: None,
+                toughness: None,
+                loyalty: None,
+            },
+            synergy: 0.42,
+            inclusion_rate: 0.9,
+            header: "High Synergy Cards".to_string(),
+        }];
+        let mut card_printings = CardPrintings::new();
+        card_printings.insert(
+            "Sol Ring".to_string(),
+            ReferencePrinting {
+                scryfall_id: "solring-123".to_string(),
+                set_code: "CMR".to_string(),
+                number: "412".to_string(),
+            },
+        );
+        let html = render(&enriched, None, &no_printings(), &card_printings);
+        assert!(html.contains(
+            r#"<a href="https://scryfall.com/card/cmr/412" target="_blank" rel="noopener" class="hover-target" data-hover-img="https://api.scryfall.com/cards/solring-123?format=image&amp;version=normal">Sol Ring</a>"#
+        ));
+        assert!(html.contains("synergie 0.42"));
+    }
+
+    #[test]
+    fn commander_thumbnail_carries_the_hover_target_class() {
+        let printing = ReferencePrinting {
+            scryfall_id: "abc-123".to_string(),
+            set_code: "M15".to_string(),
+            number: "4".to_string(),
+        };
+        let html = render(
+            &sample(),
+            Some(&printing),
+            &no_printings(),
+            &no_card_printings(),
+        );
+        assert!(html.contains("hover-target"));
+        assert!(
+            html.contains(
+                r#"data-hover-img="https://api.scryfall.com/cards/abc-123?format=image&amp;version=normal""#
+            )
+        );
     }
 }
