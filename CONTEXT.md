@@ -8,6 +8,10 @@ Base de connaissances Magic: The Gathering locale, utilisée pour interroger car
 Une carte Magic identifiée par son nom oracle unique, indépendamment de ses impressions ; porte le texte, le coût, les types, l'identité de couleur et la légalité.
 _Avoid_: Card print, fiche
 
+**Face**:
+La représentation jouable d'une des deux moitiés d'une Carte multi-face (transform, modal_dfc, split, adventure, aftermath, flip). Une Carte a une ou deux Faces ; chaque Face porte son propre oracle_text/type_line/mana_cost et peut avoir ses propres Rôles.
+_Avoid_: Verso, côté
+
 **Impression**:
 Une édition précise d'une Carte dans un Set (identifiée par un uuid MTGJSON) ; l'analyse de deck n'en tient pas compte.
 _Avoid_: Printing, version, variante
