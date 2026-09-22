@@ -25,7 +25,7 @@ pub fn detect_roles(card: &Card) -> Vec<String> {
     });
     static TARGETED_REMOVAL: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
-            r"(?i)((destroy|exile)( up to)?( (one|two|three|four|five|x|\d+))? target|target creature gets -\d|shuffles? it into (its|their)( owner'?s?)? library|puts? it on the (top|bottom) of (its|their)( owner'?s?)? library|deals? (\d+|x) damage to (any target|target creature|target planeswalker))",
+            r"(?i)((destroy|exile)( up to)?( (one|two|three|four|five|x|\d+))? target|target creature gets -\d|shuffles? it into (its|their)( owner'?s?)? library|on the (top|bottom) of its owner'?s library|deals? (\d+|x) damage to (any target|target creature|target planeswalker))",
         )
         .unwrap()
     });
@@ -40,7 +40,7 @@ pub fn detect_roles(card: &Card) -> Vec<String> {
     });
     // Haine de cimetière : cible une carte/le cimetière, pas un removal de permanent.
     static GRAVEYARD_TARGET: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?i)(target[\w\s']*graveyard|all graveyards)").unwrap());
+        LazyLock::new(|| Regex::new(r"(?i)(target[\w ']*graveyard|all graveyards)").unwrap());
     // Destruction de terrain seul : pas du removal de permanent au sens "menace".
     static LAND_ONLY_TARGET: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?i)(destroy|exile)( up to (one|two|three|four|five|x|\d+))? target lands?\b")
@@ -64,7 +64,7 @@ pub fn detect_roles(card: &Card) -> Vec<String> {
     if !is_graveyard_hate && !is_land_only_destruction && TARGETED_REMOVAL.is_match(text) {
         roles.push("removal_cible".to_string());
     }
-    if !is_graveyard_hate && WIPE.is_match(text) {
+    if !is_graveyard_hate && !is_land_only_destruction && WIPE.is_match(text) {
         roles.push("wipe".to_string());
     }
     if PROTECTION.is_match(text)
@@ -493,6 +493,17 @@ mod tests {
             None,
         );
         assert!(detect_roles(&chaos_warp).contains(&"removal_cible".to_string()));
+    }
+
+    #[test]
+    fn detects_removal_from_put_on_bottom_of_owners_library() {
+        let condemn = card(
+            "Condemn",
+            "Put target attacking creature on the bottom of its owner's library. Its controller gains life equal to its toughness.",
+            &["Instant"],
+            None,
+        );
+        assert!(detect_roles(&condemn).contains(&"removal_cible".to_string()));
     }
 
     #[test]
