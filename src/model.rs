@@ -22,17 +22,12 @@ pub enum Layout {
 
 impl Layout {
     pub fn from_mtgjson(layout: Option<&str>) -> Self {
-        match layout {
-            None | Some("normal") => Self::Normal,
-            Some("transform") => Self::Transform,
-            Some("modal_dfc") => Self::ModalDfc,
-            Some("split") => Self::Split,
-            Some("adventure") => Self::Adventure,
-            Some("aftermath") => Self::Aftermath,
-            Some("flip") => Self::Flip,
-            Some("meld") => Self::Meld,
-            Some(_) => Self::Other,
-        }
+        use serde::de::IntoDeserializer;
+        use serde::de::value::{Error, StrDeserializer};
+        layout.map_or(Self::Normal, |layout| {
+            let deserializer: StrDeserializer<Error> = layout.into_deserializer();
+            Self::deserialize(deserializer).unwrap_or(Self::Other)
+        })
     }
 
     /// Layouts où `name` combine deux Faces d'une même Carte (ADR 0004) ;
@@ -86,7 +81,6 @@ impl Face {
 pub struct Card {
     pub name: String,
     pub mana_value: Option<f64>,
-    /// Déjà l'union des Faces dans MTGJSON.
     pub color_identity: Vec<String>,
     pub layout: Layout,
     /// Au moins une Impression légale en Commander.
@@ -107,6 +101,18 @@ impl Card {
 
     pub fn is_basic_land(&self) -> bool {
         self.front.supertypes.iter().any(|t| t == "Basic") && self.front.is_land()
+    }
+
+    /// Union des étiquettes (Rôles, Thèmes) détectées sur chaque Face
+    /// (ADR 0004), dans l'ordre de première apparition.
+    pub fn union_over_faces(&self, detect: impl Fn(&Face) -> Vec<String>) -> Vec<String> {
+        let mut union: Vec<String> = Vec::new();
+        for label in self.faces().flat_map(detect) {
+            if !union.contains(&label) {
+                union.push(label);
+            }
+        }
+        union
     }
 
     /// Carte de test à une Face, légale, dans l'Identité de couleur donnée.
@@ -162,8 +168,8 @@ struct CardJson {
 
 impl From<Card> for CardJson {
     fn from(card: Card) -> Self {
-        let faces = match &card.back {
-            Some(back) => vec![card.front.clone(), back.clone()],
+        let faces = match card.back {
+            Some(back) => vec![card.front.clone(), back],
             None => Vec::new(),
         };
         let front = card.front;

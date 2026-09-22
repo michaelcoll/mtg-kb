@@ -150,14 +150,15 @@ impl FixtureCard {
         self
     }
 
-    /// Valeur brute de `cardLegalities.commander` (`None` : NULL).
-    pub fn commander(mut self, legality: Option<&str>) -> Self {
-        self.commander = legality.map(str::to_string);
+    /// `cardLegalities.commander` à NULL, comme certaines promos.
+    pub fn without_commander_legality(mut self) -> Self {
+        self.commander = None;
         self
     }
 
-    pub fn banned(self) -> Self {
-        self.commander(Some("Banned"))
+    pub fn banned(mut self) -> Self {
+        self.commander = Some("Banned".to_string());
+        self
     }
 
     pub fn standard(mut self, legality: &str) -> Self {
