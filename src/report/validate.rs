@@ -93,29 +93,39 @@ mod tests {
                 uuid TEXT, name TEXT, manaCost TEXT, manaValue REAL, type TEXT, types TEXT,
                 subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
                 colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT,
-                setCode TEXT
+                setCode TEXT, faceName TEXT, side TEXT
             );
             CREATE TABLE cardLegalities (uuid TEXT, commander TEXT, standard TEXT);
 
-            INSERT INTO cards VALUES (
+            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes,
+                supertypes, text, colorIdentity, colors, keywords, power, toughness, loyalty,
+                setCode) VALUES (
                 'llanowar', 'Llanowar Elves', '{G}', 1.0, 'Creature — Elf Druid', 'Creature',
                 'Elf, Druid', NULL, '{T}: Add {G}.', 'G', 'G', NULL, '1', '1', NULL, 'M19'
             );
-            INSERT INTO cards VALUES (
+            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes,
+                supertypes, text, colorIdentity, colors, keywords, power, toughness, loyalty,
+                setCode) VALUES (
                 'rampant-growth', 'Rampant Growth', '{1}{G}', 2.0, 'Sorcery', 'Sorcery',
                 NULL, NULL, 'Search your library for a basic land card.', 'G', 'G', NULL,
                 NULL, NULL, NULL, 'M19'
             );
-            INSERT INTO cards VALUES (
+            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes,
+                supertypes, text, colorIdentity, colors, keywords, power, toughness, loyalty,
+                setCode) VALUES (
                 'lightning-bolt', 'Lightning Bolt', '{R}', 1.0, 'Instant', 'Instant',
                 NULL, NULL, 'Lightning Bolt deals 3 damage to any target.', 'R', 'R', NULL,
                 NULL, NULL, NULL, '2ED'
             );
-            INSERT INTO cards VALUES (
+            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes,
+                supertypes, text, colorIdentity, colors, keywords, power, toughness, loyalty,
+                setCode) VALUES (
                 'channel', 'Channel', '{G}', 1.0, 'Sorcery', 'Sorcery',
                 NULL, NULL, 'Banned in Commander.', 'G', 'G', NULL, NULL, NULL, NULL, '2ED'
             );
-            INSERT INTO cards VALUES (
+            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes,
+                supertypes, text, colorIdentity, colors, keywords, power, toughness, loyalty,
+                setCode) VALUES (
                 'atraxa', 'Atraxa, Praetors'' Voice', '{G}{W}{U}{B}', 4.0,
                 'Legendary Creature — Phyrexian Angel Horror', 'Creature',
                 'Phyrexian, Angel, Horror', 'Legendary', 'Flying, vigilance...',

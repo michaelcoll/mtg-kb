@@ -89,11 +89,37 @@ impl CardsDb {
     }
 
     pub fn card_by_name(&self, name: &str) -> Result<Option<Card>> {
-        let sql = format!("SELECT {CARD_COLUMNS} FROM cards WHERE name = ?1 LIMIT 1");
+        let Some(resolved) = self.resolve_name(name)? else {
+            return Ok(None);
+        };
+        let sql = format!("SELECT {CARD_COLUMNS} FROM cards WHERE name = ?1 ORDER BY side LIMIT 1");
         let mut stmt = self.conn.prepare(&sql)?;
-        let mut rows = stmt.query([name])?;
+        let mut rows = stmt.query([resolved])?;
         match rows.next()? {
             Some(row) => Ok(Some(card_from_row(row)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Résout un nom de Carte vers son nom complet (`name`) tel qu'exposé par
+    /// MTGJSON : `A // B` pour les Cartes multi-Faces (transform, modal_dfc,
+    /// split, adventure, aftermath, flip).
+    ///
+    /// `name` peut être :
+    /// - le nom complet exact (`A // B`) ;
+    /// - le nom d'une Carte simple Face ;
+    /// - le nom de la Face principale (`faceName`, `side = 'a'`) d'une Carte
+    ///   multi-Face : une ligne de Decklist ne référence jamais une Carte par
+    ///   le nom de sa Face secondaire.
+    fn resolve_name(&self, name: &str) -> Result<Option<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name FROM cards \
+             WHERE name = ?1 OR (faceName = ?1 AND side = 'a') \
+             ORDER BY name = ?1 DESC LIMIT 1",
+        )?;
+        let mut rows = stmt.query([name])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(row.get(0)?)),
             None => Ok(None),
         }
     }
@@ -210,10 +236,13 @@ impl CardsDb {
     }
 
     pub fn rulings_by_name(&self, name: &str) -> Result<Option<Vec<Ruling>>> {
+        let Some(resolved) = self.resolve_name(name)? else {
+            return Ok(None);
+        };
         let mut uuid_stmt = self
             .conn
-            .prepare("SELECT uuid FROM cards WHERE name = ?1 LIMIT 1")?;
-        let mut uuid_rows = uuid_stmt.query([name])?;
+            .prepare("SELECT uuid FROM cards WHERE name = ?1 ORDER BY side LIMIT 1")?;
+        let mut uuid_rows = uuid_stmt.query([resolved])?;
         let Some(row) = uuid_rows.next()? else {
             return Ok(None);
         };
@@ -237,9 +266,9 @@ impl CardsDb {
     /// `None` si la Carte n'existe pas. Légale dès qu'au moins une Impression
     /// l'est (certaines promos ont `commander` à NULL).
     pub fn is_legal_commander(&self, name: &str) -> Result<Option<bool>> {
-        if self.card_by_name(name)?.is_none() {
+        let Some(resolved) = self.resolve_name(name)? else {
             return Ok(None);
-        }
+        };
 
         let mut stmt = self.conn.prepare(
             "SELECT EXISTS( \
@@ -248,13 +277,17 @@ impl CardsDb {
                  WHERE c.name = ?1 AND cl.commander = 'Legal' \
              )",
         )?;
-        let legal: bool = stmt.query_row([name], |row| row.get(0))?;
+        let legal: bool = stmt.query_row([resolved], |row| row.get(0))?;
         Ok(Some(legal))
     }
 
     /// La plus récente en papier, hors promo/surdimensionnée/fantaisie ; ces
     /// filtres sont relâchés successivement à défaut.
     pub fn reference_printing(&self, name: &str) -> Result<Option<ReferencePrinting>> {
+        let Some(resolved) = self.resolve_name(name)? else {
+            return Ok(None);
+        };
+
         const TIERS: &[&str] = &[
             "AND (c.isPromo = 0 OR c.isPromo IS NULL) \
              AND (c.isOversized = 0 OR c.isOversized IS NULL) \
@@ -270,10 +303,10 @@ impl CardsDb {
                  LEFT JOIN sets s ON s.code = c.setCode \
                  WHERE c.name = ?1 AND c.availability LIKE '%paper%' \
                  AND ci.scryfallId IS NOT NULL {extra_filter} \
-                 ORDER BY s.releaseDate DESC LIMIT 1"
+                 ORDER BY s.releaseDate DESC, c.side LIMIT 1"
             );
             let mut stmt = self.conn.prepare(&sql)?;
-            let mut rows = stmt.query([name])?;
+            let mut rows = stmt.query([&resolved])?;
             if let Some(row) = rows.next()? {
                 let layout: Option<String> = row.get(3)?;
                 return Ok(Some(ReferencePrinting {
@@ -303,7 +336,8 @@ mod tests {
                 subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
                 colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT,
                 setCode TEXT, number TEXT, availability TEXT,
-                isPromo BOOLEAN, isOversized BOOLEAN, isFunny BOOLEAN, layout TEXT
+                isPromo BOOLEAN, isOversized BOOLEAN, isFunny BOOLEAN, layout TEXT,
+                faceName TEXT, side TEXT
             );
             CREATE TABLE cardLegalities (uuid TEXT, commander TEXT, standard TEXT);
             CREATE TABLE cardRulings (uuid TEXT, date TEXT, text TEXT);
@@ -316,47 +350,53 @@ mod tests {
             INSERT INTO cards VALUES (
                 'sol-lea', 'Sol Ring', '{1}', 1.0, 'Artifact', 'Artifact', NULL, NULL,
                 '{T}: Add {C}{C}.', NULL, NULL, NULL, NULL, NULL, NULL, 'LEA',
-                '1', 'paper', 0, 0, 0, 'normal'
+                '1', 'paper', 0, 0, 0, 'normal', 'Sol Ring', 'a'
             );
             INSERT INTO cards VALUES (
                 'sol-c21', 'Sol Ring', '{1}', 1.0, 'Artifact', 'Artifact', NULL, NULL,
                 '{T}: Add {C}{C}.', NULL, NULL, NULL, NULL, NULL, NULL, 'C21',
-                '263', 'paper', 0, 0, 0, 'normal'
+                '263', 'paper', 0, 0, 0, 'normal', 'Sol Ring', 'a'
             );
             INSERT INTO cards VALUES (
                 'atraxa', 'Atraxa, Praetors'' Voice', '{G}{W}{U}{B}', 4.0,
                 'Legendary Creature — Phyrexian Angel Horror', 'Creature',
                 'Phyrexian, Angel, Horror', 'Legendary', 'Flying, vigilance...',
                 'B, G, U, W', 'W, U, B, G', 'Deathtouch, Flying, Lifelink, Vigilance, Proliferate',
-                '4', '4', NULL, 'M15', '1', 'paper', 0, 0, 0, 'normal'
+                '4', '4', NULL, 'M15', '1', 'paper', 0, 0, 0, 'normal',
+                'Atraxa, Praetors'' Voice', 'a'
             );
             INSERT INTO cards VALUES (
                 'llanowar', 'Llanowar Elves', '{G}', 1.0, 'Creature — Elf Druid', 'Creature',
                 'Elf, Druid', NULL, '{T}: Add {G}.', 'G', 'G', NULL, '1', '1', NULL, 'M19',
-                '183', 'paper', 0, 0, 0, 'normal'
+                '183', 'paper', 0, 0, 0, 'normal', 'Llanowar Elves', 'a'
             );
             INSERT INTO cards VALUES (
                 'promo-only', 'Command Tower', NULL, 0.0, 'Land', 'Land', NULL, NULL,
                 'Add one mana of any color in your Commander''s color identity.',
-                NULL, NULL, NULL, NULL, NULL, NULL, 'PPRO', '1', 'paper', 1, 0, 0, 'normal'
+                NULL, NULL, NULL, NULL, NULL, NULL, 'PPRO', '1', 'paper', 1, 0, 0, 'normal',
+                'Command Tower', 'a'
             );
             INSERT INTO cards VALUES (
                 'no-scryfall', 'Obscure Test Card', NULL, 0.0, 'Land', 'Land', NULL, NULL,
-                NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'NST', '1', 'paper', 0, 0, 0, 'normal'
+                NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'NST', '1', 'paper', 0, 0, 0, 'normal',
+                'Obscure Test Card', 'a'
             );
             INSERT INTO cards VALUES (
                 'oversized-only', 'Oversized Test Card', NULL, 0.0, 'Land', 'Land', NULL, NULL,
-                NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'OSIZ', '1', 'paper', 0, 1, 0, 'normal'
+                NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'OSIZ', '1', 'paper', 0, 1, 0, 'normal',
+                'Oversized Test Card', 'a'
             );
             INSERT INTO cards VALUES (
                 'sylvan-5ed', 'Sylvan Library', '{G}', 1.0, 'Enchantment', 'Enchantment', NULL,
                 NULL, 'At the beginning of your draw step, draw two additional cards.',
-                'G', 'G', NULL, NULL, NULL, NULL, '5ED', '1', 'paper', 0, 0, 0, 'normal'
+                'G', 'G', NULL, NULL, NULL, NULL, '5ED', '1', 'paper', 0, 0, 0, 'normal',
+                'Sylvan Library', 'a'
             );
             INSERT INTO cards VALUES (
                 'sylvan-ptc', 'Sylvan Library', '{G}', 1.0, 'Enchantment', 'Enchantment', NULL,
                 NULL, 'At the beginning of your draw step, draw two additional cards.',
-                'G', 'G', NULL, NULL, NULL, NULL, 'PTC', '1', 'paper', 1, 0, 0, 'normal'
+                'G', 'G', NULL, NULL, NULL, NULL, 'PTC', '1', 'paper', 1, 0, 0, 'normal',
+                'Sylvan Library', 'a'
             );
 
             INSERT INTO cardLegalities VALUES ('sol-lea', 'Legal', 'Legal');
@@ -391,30 +431,90 @@ mod tests {
         conn.execute_batch(
             r#"
             INSERT INTO cards VALUES (
-                'delver-transform', 'Delver of Secrets // Insectile Aberration', NULL, 1.0,
+                'delver-transform-a', 'Delver of Secrets // Insectile Aberration', NULL, 1.0,
                 'Creature — Human Wizard', 'Creature', 'Human, Wizard', NULL,
                 'At the beginning of your upkeep, look at the top card of your library.',
-                'U', 'U', NULL, '1', '1', NULL, 'ISD', '51', 'paper', 0, 0, 0, 'transform'
+                'U', 'U', NULL, '1', '1', NULL, 'ISD', '51', 'paper', 0, 0, 0, 'transform',
+                'Delver of Secrets', 'a'
             );
             INSERT INTO cards VALUES (
-                'valki-mdfc', 'Valki, God of Lies // Tibalt, Cosmic Impostor', NULL, 30.0,
+                'delver-transform-b', 'Delver of Secrets // Insectile Aberration', NULL, 1.0,
+                'Creature — Human Insect', 'Creature', 'Human, Insect', NULL,
+                'Flying.',
+                'U', 'U', NULL, '3', '2', NULL, 'ISD', '51', 'paper', 0, 0, 0, 'transform',
+                'Insectile Aberration', 'b'
+            );
+            INSERT INTO cards VALUES (
+                'valki-mdfc-a', 'Valki, God of Lies // Tibalt, Cosmic Impostor', NULL, 2.0,
                 'Legendary Creature — God', 'Creature', 'God', 'Legendary',
                 'If a permanent entering the battlefield causes a triggered ability...',
-                'B, R', 'B', NULL, '3', '3', NULL, 'KHM', '91', 'paper', 0, 0, 0, 'modal_dfc'
+                'B, R', 'B', NULL, '3', '3', NULL, 'KHM', '91', 'paper', 0, 0, 0, 'modal_dfc',
+                'Valki, God of Lies', 'a'
             );
             INSERT INTO cards VALUES (
-                'fire-split', 'Fire // Ice', NULL, 30.0, 'Instant', 'Instant', NULL, NULL,
+                'valki-mdfc-b', 'Valki, God of Lies // Tibalt, Cosmic Impostor', NULL, 6.0,
+                'Legendary Planeswalker — Tibalt', 'Planeswalker', NULL, 'Legendary',
+                'Each opponent may discard a card...',
+                'B, R', 'B, R', NULL, NULL, NULL, '5', 'KHM', '91', 'paper', 0, 0, 0, 'modal_dfc',
+                'Tibalt, Cosmic Impostor', 'b'
+            );
+            INSERT INTO cards VALUES (
+                'fire-split-a', 'Fire // Ice', NULL, 1.0, 'Instant', 'Instant', NULL, NULL,
                 'Fire deals 2 damage divided as you choose among one or two targets.',
-                'R, U', 'R, U', NULL, NULL, NULL, NULL, 'GPT', '119', 'paper', 0, 0, 0, 'split'
+                'R', 'R', NULL, NULL, NULL, NULL, 'GPT', '119', 'paper', 0, 0, 0, 'split',
+                'Fire', 'a'
+            );
+            INSERT INTO cards VALUES (
+                'fire-split-b', 'Fire // Ice', NULL, 1.0, 'Instant', 'Instant', NULL, NULL,
+                'Tap target land. It doesn''t untap during its controller''s next untap step.',
+                'U', 'U', NULL, NULL, NULL, NULL, 'GPT', '119', 'paper', 0, 0, 0, 'split',
+                'Ice', 'b'
             );
 
-            INSERT INTO cardIdentifiers VALUES ('delver-transform', 'scryfall-delver');
-            INSERT INTO cardIdentifiers VALUES ('valki-mdfc', 'scryfall-valki');
-            INSERT INTO cardIdentifiers VALUES ('fire-split', 'scryfall-fire-ice');
+            INSERT INTO cards VALUES (
+                'brightcap-adventure-a', 'Brightcap Badger // Fungus Frolic', '{1}{G}', 2.0,
+                'Creature — Badger', 'Creature', 'Badger', NULL,
+                'Whenever this creature enters, you gain 1 life for each creature you control.',
+                'G', 'G', NULL, '2', '2', NULL, 'MID', '164', 'paper', 0, 0, 0, 'adventure',
+                'Brightcap Badger', 'a'
+            );
+            INSERT INTO cards VALUES (
+                'brightcap-adventure-b', 'Brightcap Badger // Fungus Frolic', '{G}', 1.0,
+                'Sorcery — Adventure', 'Sorcery', NULL, NULL,
+                'Create a 1/1 green Saproling creature token.',
+                'G', 'G', NULL, NULL, NULL, NULL, 'MID', '164', 'paper', 0, 0, 0, 'adventure',
+                'Fungus Frolic', 'b'
+            );
+
+            INSERT INTO cardIdentifiers VALUES ('delver-transform-a', 'scryfall-delver');
+            INSERT INTO cardIdentifiers VALUES ('delver-transform-b', 'scryfall-delver');
+            INSERT INTO cardIdentifiers VALUES ('valki-mdfc-a', 'scryfall-valki');
+            INSERT INTO cardIdentifiers VALUES ('valki-mdfc-b', 'scryfall-valki');
+            INSERT INTO cardIdentifiers VALUES ('fire-split-a', 'scryfall-fire-ice');
+            INSERT INTO cardIdentifiers VALUES ('fire-split-b', 'scryfall-fire-ice');
+            INSERT INTO cards VALUES (
+                'balaged-mdfc-a', 'Bala Ged Recovery // Bala Ged Sanctuary', '{2}{G}', 3.0,
+                'Sorcery', 'Sorcery', NULL, NULL,
+                'Return target card from your graveyard to your hand.',
+                'G', 'G', NULL, NULL, NULL, NULL, 'ZNR', '180', 'paper', 0, 0, 0, 'modal_dfc',
+                'Bala Ged Recovery', 'a'
+            );
+            INSERT INTO cards VALUES (
+                'balaged-mdfc-b', 'Bala Ged Recovery // Bala Ged Sanctuary', '', 3.0,
+                'Land', 'Land', NULL, NULL, 'Bala Ged Sanctuary enters tapped.',
+                'G', NULL, NULL, NULL, NULL, NULL, 'ZNR', '180', 'paper', 0, 0, 0, 'modal_dfc',
+                'Bala Ged Sanctuary', 'b'
+            );
+            INSERT INTO cardLegalities VALUES ('balaged-mdfc-a', 'Legal', 'Legal');
+            INSERT INTO cardLegalities VALUES ('balaged-mdfc-b', 'Legal', 'Legal');
+
+            INSERT INTO cardIdentifiers VALUES ('brightcap-adventure-a', 'scryfall-brightcap');
+            INSERT INTO cardIdentifiers VALUES ('brightcap-adventure-b', 'scryfall-brightcap');
 
             INSERT INTO sets VALUES ('ISD', 'Innistrad', '2011-09-30', 'expansion', NULL, 264, 264);
             INSERT INTO sets VALUES ('KHM', 'Kaldheim', '2021-02-05', 'expansion', NULL, 285, 285);
             INSERT INTO sets VALUES ('GPT', 'Guildpact', '2006-05-01', 'expansion', NULL, 165, 165);
+            INSERT INTO sets VALUES ('MID', 'Innistrad: Midnight Hunt', '2021-09-24', 'expansion', NULL, 277, 277);
             "#,
         )
         .unwrap();
@@ -448,6 +548,84 @@ mod tests {
         let (_dir, path) = fixture_db();
         let db = CardsDb::open(&path).unwrap();
         assert!(db.card_by_name("Not A Real Card").unwrap().is_none());
+    }
+
+    #[test]
+    fn card_by_name_resolves_adventure_card_by_main_face_name() {
+        let (_dir, path) = fixture_db_with_multiface();
+        let db = CardsDb::open(&path).unwrap();
+        let card = db
+            .card_by_name("Brightcap Badger")
+            .unwrap()
+            .expect("card found");
+        assert_eq!(card.name, "Brightcap Badger // Fungus Frolic");
+    }
+
+    #[test]
+    fn card_by_name_does_not_resolve_by_secondary_face_name() {
+        let (_dir, path) = fixture_db_with_multiface();
+        let db = CardsDb::open(&path).unwrap();
+        assert!(db.card_by_name("Fungus Frolic").unwrap().is_none());
+    }
+
+    #[test]
+    fn card_by_name_resolves_modal_dfc_by_main_face_name() {
+        let (_dir, path) = fixture_db_with_multiface();
+        let db = CardsDb::open(&path).unwrap();
+        let card = db
+            .card_by_name("Valki, God of Lies")
+            .unwrap()
+            .expect("card found");
+        assert_eq!(card.name, "Valki, God of Lies // Tibalt, Cosmic Impostor");
+    }
+
+    #[test]
+    fn card_by_name_resolves_bala_ged_recovery_modal_dfc() {
+        let (_dir, path) = fixture_db_with_multiface();
+        let db = CardsDb::open(&path).unwrap();
+        let card = db
+            .card_by_name("Bala Ged Recovery")
+            .unwrap()
+            .expect("card found");
+        assert_eq!(card.name, "Bala Ged Recovery // Bala Ged Sanctuary");
+        assert_eq!(card.mana_cost.as_deref(), Some("{2}{G}"));
+    }
+
+    #[test]
+    fn card_by_name_resolves_transform_and_split_by_main_face_name() {
+        let (_dir, path) = fixture_db_with_multiface();
+        let db = CardsDb::open(&path).unwrap();
+        let delver = db
+            .card_by_name("Delver of Secrets")
+            .unwrap()
+            .expect("found");
+        assert_eq!(delver.name, "Delver of Secrets // Insectile Aberration");
+        let fire = db.card_by_name("Fire").unwrap().expect("found");
+        assert_eq!(fire.name, "Fire // Ice");
+        assert!(db.card_by_name("Ice").unwrap().is_none());
+    }
+
+    #[test]
+    fn is_legal_commander_resolves_by_main_face_name() {
+        let (_dir, path) = fixture_db_with_multiface();
+        let db = CardsDb::open(&path).unwrap();
+        assert_eq!(
+            db.is_legal_commander("Bala Ged Recovery").unwrap(),
+            Some(true)
+        );
+        assert_eq!(db.is_legal_commander("Bala Ged Sanctuary").unwrap(), None);
+    }
+
+    #[test]
+    fn card_by_name_with_full_name_returns_main_face_characteristics() {
+        let (_dir, path) = fixture_db_with_multiface();
+        let db = CardsDb::open(&path).unwrap();
+        let card = db
+            .card_by_name("Brightcap Badger // Fungus Frolic")
+            .unwrap()
+            .expect("card found");
+        assert_eq!(card.mana_cost.as_deref(), Some("{1}{G}"));
+        assert_eq!(card.mana_value, Some(2.0));
     }
 
     #[test]

@@ -134,17 +134,26 @@ mod tests {
             CREATE TABLE cards (
                 uuid TEXT, name TEXT, manaCost TEXT, manaValue REAL, type TEXT, types TEXT,
                 subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
-                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT
+                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT,
+                faceName TEXT, side TEXT
             );
             CREATE TABLE cardLegalities (uuid TEXT, commander TEXT);
 
-            INSERT INTO cards VALUES ('rampant', 'Rampant Growth', '{1}{G}', 2.0, 'Sorcery', 'Sorcery',
+            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
+                text, colorIdentity, colors, keywords, power, toughness, loyalty)
+                VALUES ('rampant', 'Rampant Growth', '{1}{G}', 2.0, 'Sorcery', 'Sorcery',
                 NULL, NULL, 'text', 'G', 'G', NULL, NULL, NULL, NULL);
-            INSERT INTO cards VALUES ('bolt', 'Lightning Bolt', '{R}', 1.0, 'Instant', 'Instant',
+            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
+                text, colorIdentity, colors, keywords, power, toughness, loyalty)
+                VALUES ('bolt', 'Lightning Bolt', '{R}', 1.0, 'Instant', 'Instant',
                 NULL, NULL, 'text', 'R', 'R', NULL, NULL, NULL, NULL);
-            INSERT INTO cards VALUES ('elves', 'Llanowar Elves', '{G}', 1.0, 'Creature', 'Creature',
+            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
+                text, colorIdentity, colors, keywords, power, toughness, loyalty)
+                VALUES ('elves', 'Llanowar Elves', '{G}', 1.0, 'Creature', 'Creature',
                 'Elf', NULL, 'text', 'G', 'G', NULL, '1', '1', NULL);
-            INSERT INTO cards VALUES ('channel', 'Channel', '{G}', 1.0, 'Sorcery', 'Sorcery',
+            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
+                text, colorIdentity, colors, keywords, power, toughness, loyalty)
+                VALUES ('channel', 'Channel', '{G}', 1.0, 'Sorcery', 'Sorcery',
                 NULL, NULL, 'text', 'G', 'G', NULL, NULL, NULL, NULL);
 
             INSERT INTO cardLegalities VALUES ('rampant', 'Legal');
@@ -236,7 +245,8 @@ mod tests {
             CREATE TABLE cards (
                 uuid TEXT, name TEXT, manaCost TEXT, manaValue REAL, type TEXT, types TEXT,
                 subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
-                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT
+                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT,
+                faceName TEXT, side TEXT
             );
             CREATE TABLE cardLegalities (uuid TEXT, commander TEXT);
             "#,
@@ -247,7 +257,9 @@ mod tests {
             let uuid = format!("card-{i}");
             let name = format!("Test Card {i}");
             conn.execute(
-                "INSERT INTO cards VALUES (?1, ?2, '{G}', 1.0, 'Creature', 'Creature', NULL, NULL, \
+                "INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, \
+                 supertypes, text, colorIdentity, colors, keywords, power, toughness, loyalty) \
+                 VALUES (?1, ?2, '{G}', 1.0, 'Creature', 'Creature', NULL, NULL, \
                  'text', 'G', 'G', NULL, '1', '1', NULL)",
                 rusqlite::params![uuid, name],
             )

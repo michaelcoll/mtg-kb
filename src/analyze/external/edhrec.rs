@@ -244,13 +244,18 @@ mod tests {
             CREATE TABLE cards (
                 uuid TEXT, name TEXT, manaCost TEXT, manaValue REAL, type TEXT, types TEXT,
                 subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
-                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT
+                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT,
+                faceName TEXT, side TEXT
             );
             CREATE TABLE cardLegalities (uuid TEXT, commander TEXT);
 
-            INSERT INTO cards VALUES ('rampant', 'Rampant Growth', '{1}{G}', 2.0, 'Sorcery', 'Sorcery',
+            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
+                text, colorIdentity, colors, keywords, power, toughness, loyalty)
+                VALUES ('rampant', 'Rampant Growth', '{1}{G}', 2.0, 'Sorcery', 'Sorcery',
                 NULL, NULL, 'text', 'G', 'G', NULL, NULL, NULL, NULL);
-            INSERT INTO cards VALUES ('solring', 'Sol Ring', '{1}', 1.0, 'Artifact', 'Artifact',
+            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
+                text, colorIdentity, colors, keywords, power, toughness, loyalty)
+                VALUES ('solring', 'Sol Ring', '{1}', 1.0, 'Artifact', 'Artifact',
                 NULL, NULL, 'text', NULL, NULL, NULL, NULL, NULL, NULL);
 
             INSERT INTO cardLegalities VALUES ('rampant', 'Legal');

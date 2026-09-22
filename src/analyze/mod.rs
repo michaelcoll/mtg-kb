@@ -207,20 +207,31 @@ mod tests {
             CREATE TABLE cards (
                 uuid TEXT, name TEXT, manaCost TEXT, manaValue REAL, type TEXT, types TEXT,
                 subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
-                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT
+                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT,
+                faceName TEXT, side TEXT
             );
             CREATE TABLE cardLegalities (uuid TEXT, commander TEXT);
 
-            INSERT INTO cards VALUES ('atraxa', 'Atraxa, Praetors'' Voice', '{G}{W}{U}{B}', 4.0,
+            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
+                text, colorIdentity, colors, keywords, power, toughness, loyalty)
+                VALUES ('atraxa', 'Atraxa, Praetors'' Voice', '{G}{W}{U}{B}', 4.0,
                 'Legendary Creature — Phyrexian Angel Horror', 'Creature', 'Phyrexian, Angel, Horror',
                 'Legendary', 'text', 'B, G, U, W', 'W, U, B, G', NULL, '4', '4', NULL);
-            INSERT INTO cards VALUES ('solring', 'Sol Ring', '{1}', 1.0, 'Artifact', 'Artifact',
+            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
+                text, colorIdentity, colors, keywords, power, toughness, loyalty)
+                VALUES ('solring', 'Sol Ring', '{1}', 1.0, 'Artifact', 'Artifact',
                 NULL, NULL, '{T}: Add {C}{C}.', NULL, NULL, NULL, NULL, NULL, NULL);
-            INSERT INTO cards VALUES ('forest', 'Forest', NULL, 0.0, 'Basic Land — Forest', 'Land',
+            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
+                text, colorIdentity, colors, keywords, power, toughness, loyalty)
+                VALUES ('forest', 'Forest', NULL, 0.0, 'Basic Land — Forest', 'Land',
                 'Forest', 'Basic', 'text', NULL, NULL, NULL, NULL, NULL, NULL);
-            INSERT INTO cards VALUES ('lotus', 'Black Lotus', '{0}', 0.0, 'Artifact', 'Artifact',
+            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
+                text, colorIdentity, colors, keywords, power, toughness, loyalty)
+                VALUES ('lotus', 'Black Lotus', '{0}', 0.0, 'Artifact', 'Artifact',
                 NULL, NULL, 'text', NULL, NULL, NULL, NULL, NULL, NULL);
-            INSERT INTO cards VALUES ('shock', 'Shock', '{R}', 1.0, 'Instant', 'Instant',
+            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
+                text, colorIdentity, colors, keywords, power, toughness, loyalty)
+                VALUES ('shock', 'Shock', '{R}', 1.0, 'Instant', 'Instant',
                 NULL, NULL, 'text', 'R', 'R', NULL, NULL, NULL, NULL);
 
             INSERT INTO cardLegalities VALUES ('atraxa', 'Legal');
@@ -368,16 +379,23 @@ mod tests {
             CREATE TABLE cards (
                 uuid TEXT, name TEXT, manaCost TEXT, manaValue REAL, type TEXT, types TEXT,
                 subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
-                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT
+                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT,
+                faceName TEXT, side TEXT
             );
             CREATE TABLE cardLegalities (uuid TEXT, commander TEXT);
 
-            INSERT INTO cards VALUES ('atraxa', 'Atraxa, Praetors'' Voice', '{G}{W}{U}{B}', 4.0,
+            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
+                text, colorIdentity, colors, keywords, power, toughness, loyalty)
+                VALUES ('atraxa', 'Atraxa, Praetors'' Voice', '{G}{W}{U}{B}', 4.0,
                 'Legendary Creature — Phyrexian Angel Horror', 'Creature', 'Phyrexian, Angel, Horror',
                 'Legendary', 'text', 'B, G, U, W', 'W, U, B, G', NULL, '4', '4', NULL);
-            INSERT INTO cards VALUES ('forest', 'Forest', NULL, 0.0, 'Basic Land — Forest', 'Land',
+            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
+                text, colorIdentity, colors, keywords, power, toughness, loyalty)
+                VALUES ('forest', 'Forest', NULL, 0.0, 'Basic Land — Forest', 'Land',
                 'Forest', 'Basic', 'text', NULL, NULL, NULL, NULL, NULL, NULL);
-            INSERT INTO cards VALUES ('goblin-pool', 'Goblin Raider', '{1}{G}', 2.0, 'Creature',
+            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
+                text, colorIdentity, colors, keywords, power, toughness, loyalty)
+                VALUES ('goblin-pool', 'Goblin Raider', '{1}{G}', 2.0, 'Creature',
                 'Creature', 'Goblin', NULL, '', 'G', 'G', NULL, '2', '2', NULL);
 
             INSERT INTO cardLegalities VALUES ('atraxa', 'Legal');
@@ -392,7 +410,9 @@ mod tests {
             let uuid = format!("goblin-deck-{i}");
             let name = format!("Goblin Grunt {i}");
             conn.execute(
-                "INSERT INTO cards VALUES (?1, ?2, '{G}', 1.0, 'Creature', 'Creature', 'Goblin', \
+                "INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, \
+                 supertypes, text, colorIdentity, colors, keywords, power, toughness, loyalty) \
+                 VALUES (?1, ?2, '{G}', 1.0, 'Creature', 'Creature', 'Goblin', \
                  NULL, '', 'G', 'G', NULL, '1', '1', NULL)",
                 rusqlite::params![uuid, name],
             )
@@ -449,16 +469,23 @@ mod tests {
             CREATE TABLE cards (
                 uuid TEXT, name TEXT, manaCost TEXT, manaValue REAL, type TEXT, types TEXT,
                 subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
-                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT
+                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT,
+                faceName TEXT, side TEXT
             );
             CREATE TABLE cardLegalities (uuid TEXT, commander TEXT);
 
-            INSERT INTO cards VALUES ('goblin-commander', 'Goblin Warlord', '{2}{R}{R}', 4.0,
+            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
+                text, colorIdentity, colors, keywords, power, toughness, loyalty)
+                VALUES ('goblin-commander', 'Goblin Warlord', '{2}{R}{R}', 4.0,
                 'Legendary Creature — Goblin Warrior', 'Creature', 'Goblin, Warrior',
                 'Legendary', 'text', 'R', 'R', NULL, '4', '4', NULL);
-            INSERT INTO cards VALUES ('forest', 'Forest', NULL, 0.0, 'Basic Land — Forest', 'Land',
+            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
+                text, colorIdentity, colors, keywords, power, toughness, loyalty)
+                VALUES ('forest', 'Forest', NULL, 0.0, 'Basic Land — Forest', 'Land',
                 'Forest', 'Basic', 'text', NULL, NULL, NULL, NULL, NULL, NULL);
-            INSERT INTO cards VALUES ('goblin-pool', 'Goblin Raider', '{1}{R}', 2.0, 'Creature',
+            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
+                text, colorIdentity, colors, keywords, power, toughness, loyalty)
+                VALUES ('goblin-pool', 'Goblin Raider', '{1}{R}', 2.0, 'Creature',
                 'Creature', 'Goblin', NULL, '', 'R', 'R', NULL, '2', '2', NULL);
 
             INSERT INTO cardLegalities VALUES ('goblin-commander', 'Legal');
@@ -474,7 +501,9 @@ mod tests {
             let uuid = format!("goblin-deck-{i}");
             let name = format!("Goblin Grunt {i}");
             conn.execute(
-                "INSERT INTO cards VALUES (?1, ?2, '{R}', 1.0, 'Creature', 'Creature', 'Goblin', \
+                "INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, \
+                 supertypes, text, colorIdentity, colors, keywords, power, toughness, loyalty) \
+                 VALUES (?1, ?2, '{R}', 1.0, 'Creature', 'Creature', 'Goblin', \
                  NULL, '', 'R', 'R', NULL, '1', '1', NULL)",
                 rusqlite::params![uuid, name],
             )
