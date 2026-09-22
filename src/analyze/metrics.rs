@@ -12,8 +12,9 @@ pub fn is_land(card: &Card) -> bool {
 }
 
 pub fn detect_roles(card: &Card) -> Vec<String> {
-    static RAMP_LAND_SEARCH: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?i)search your library for a .*land").unwrap());
+    static RAMP_LAND_SEARCH: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)search your library for (a|up to \w+|\w+) .*land").unwrap()
+    });
     static MANA_ABILITY: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?i)add\b[^.]*(mana|\{)").unwrap());
     static DRAW: LazyLock<Regex> = LazyLock::new(|| {
@@ -24,16 +25,26 @@ pub fn detect_roles(card: &Card) -> Vec<String> {
     });
     static TARGETED_REMOVAL: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
-            r"(?i)((destroy|exile)( up to)?( (one|two|three|four|five|x|\d+))? target|target creature gets -\d)",
+            r"(?i)((destroy|exile)( up to)?( (one|two|three|four|five|x|\d+))? target|target creature gets -\d|shuffles? it into (its|their)( owner'?s?)? library|puts? it on the (top|bottom) of (its|their)( owner'?s?)? library|deals? (\d+|x) damage to (any target|target creature|target planeswalker))",
         )
         .unwrap()
     });
     static WIPE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)(destroy all|exile all|each creature (gets|deals)|all creatures get)")
-            .unwrap()
+        Regex::new(
+            r"(?i)(destroy all|exile all|each creature (gets|deals)|all creatures get|deals? (\d+|x) damage to each creature)",
+        )
+        .unwrap()
     });
     static PROTECTION: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?i)(hexproof|indestructible|protection from|counter target spell)").unwrap()
+    });
+    // Haine de cimetière : cible une carte/le cimetière, pas un removal de permanent.
+    static GRAVEYARD_TARGET: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)(target[\w\s']*graveyard|all graveyards)").unwrap());
+    // Destruction de terrain seul : pas du removal de permanent au sens "menace".
+    static LAND_ONLY_TARGET: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)(destroy|exile)( up to (one|two|three|four|five|x|\d+))? target lands?\b")
+            .unwrap()
     });
 
     let mut roles = Vec::new();
@@ -48,10 +59,12 @@ pub fn detect_roles(card: &Card) -> Vec<String> {
     if DRAW.is_match(text) {
         roles.push("pioche".to_string());
     }
-    if TARGETED_REMOVAL.is_match(text) {
+    let is_graveyard_hate = GRAVEYARD_TARGET.is_match(text);
+    let is_land_only_destruction = LAND_ONLY_TARGET.is_match(text);
+    if !is_graveyard_hate && !is_land_only_destruction && TARGETED_REMOVAL.is_match(text) {
         roles.push("removal_cible".to_string());
     }
-    if WIPE.is_match(text) {
+    if !is_graveyard_hate && WIPE.is_match(text) {
         roles.push("wipe".to_string());
     }
     if PROTECTION.is_match(text)
@@ -458,6 +471,167 @@ mod tests {
             None,
         );
         assert!(detect_roles(&immoral_bargain).contains(&"removal_cible".to_string()));
+    }
+
+    #[test]
+    fn detects_wipe_from_deals_damage_to_each_creature() {
+        let blasphemous_act = card(
+            "Blasphemous Act",
+            "This spell costs {1} less to cast for each creature on the battlefield. Blasphemous Act deals 13 damage to each creature.",
+            &["Sorcery"],
+            None,
+        );
+        assert!(detect_roles(&blasphemous_act).contains(&"wipe".to_string()));
+    }
+
+    #[test]
+    fn detects_removal_from_shuffle_into_library() {
+        let chaos_warp = card(
+            "Chaos Warp",
+            "The owner of target permanent shuffles it into their library, then reveals the top card of that library. If it's a permanent card, that player puts it onto the battlefield.",
+            &["Instant"],
+            None,
+        );
+        assert!(detect_roles(&chaos_warp).contains(&"removal_cible".to_string()));
+    }
+
+    #[test]
+    fn detects_removal_from_damage_to_any_target() {
+        let court_of_ire = card(
+            "Court of Ire",
+            "Whenever you attack, Court of Ire deals 2 damage to any target. Ferocious — If you attacked with three or more creatures this turn, it deals 7 damage to that player or planeswalker instead.",
+            &["Enchantment"],
+            None,
+        );
+        assert!(detect_roles(&court_of_ire).contains(&"removal_cible".to_string()));
+    }
+
+    #[test]
+    fn detects_ramp_from_up_to_two_basic_land_cards() {
+        let cultivate = card(
+            "Cultivate",
+            "Search your library for up to two basic land cards, reveal them, put one onto the battlefield tapped and the other into your hand, then shuffle.",
+            &["Sorcery"],
+            None,
+        );
+        assert!(detect_roles(&cultivate).contains(&"ramp".to_string()));
+
+        let kodamas_reach = card(
+            "Kodama's Reach",
+            "Search your library for up to two basic land cards, reveal those cards, then put one onto the battlefield tapped and the other into your hand. Then shuffle.",
+            &["Sorcery"],
+            None,
+        );
+        assert!(detect_roles(&kodamas_reach).contains(&"ramp".to_string()));
+    }
+
+    #[test]
+    fn graveyard_hate_is_not_removal_or_wipe() {
+        let crook_of_condemnation = card(
+            "Crook of Condemnation",
+            "{T}: Exile target card from a graveyard. If it was a creature card, you gain 1 life. {2}, {T}, Sacrifice Crook of Condemnation: Exile all graveyards.",
+            &["Artifact"],
+            None,
+        );
+        let roles = detect_roles(&crook_of_condemnation);
+        assert!(!roles.contains(&"removal_cible".to_string()));
+        assert!(!roles.contains(&"wipe".to_string()));
+
+        let lantern_of_the_lost = card(
+            "Lantern of the Lost",
+            "{T}, Sacrifice Lantern of the Lost: Exile target card from a graveyard. {3}, {T}, Sacrifice Lantern of the Lost: Exile all cards from all graveyards.",
+            &["Artifact"],
+            None,
+        );
+        let roles = detect_roles(&lantern_of_the_lost);
+        assert!(!roles.contains(&"removal_cible".to_string()));
+        assert!(!roles.contains(&"wipe".to_string()));
+
+        let dino_dna = card(
+            "Dino DNA",
+            "When Dino DNA enters the battlefield, exile target creature card from a graveyard. Create a token that's a copy of it, except it's a 5/5 Dinosaur in addition to its other types.",
+            &["Artifact"],
+            None,
+        );
+        assert!(!detect_roles(&dino_dna).contains(&"removal_cible".to_string()));
+
+        let conversion_chamber = card(
+            "Conversion Chamber",
+            "{2}, {T}: Exile target artifact card from a graveyard. Create a 1/1 colorless Servo artifact creature token.",
+            &["Artifact"],
+            None,
+        );
+        assert!(!detect_roles(&conversion_chamber).contains(&"removal_cible".to_string()));
+
+        let canoptek_scarab_swarm = card(
+            "Canoptek Scarab Swarm",
+            "{4}{B}: Exile target player's graveyard.",
+            &["Creature"],
+            None,
+        );
+        assert!(!detect_roles(&canoptek_scarab_swarm).contains(&"removal_cible".to_string()));
+    }
+
+    #[test]
+    fn land_destruction_alone_is_not_removal_cible() {
+        let rumbling_crescendo = card(
+            "Rumbling Crescendo",
+            "Destroy up to two target lands.",
+            &["Sorcery"],
+            None,
+        );
+        assert!(!detect_roles(&rumbling_crescendo).contains(&"removal_cible".to_string()));
+    }
+
+    #[test]
+    fn removal_and_wipe_non_regression() {
+        let swords = card(
+            "Swords to Plowshares",
+            "Exile target creature. Its controller gains life equal to its power.",
+            &["Instant"],
+            None,
+        );
+        assert!(detect_roles(&swords).contains(&"removal_cible".to_string()));
+
+        let beast_within = card(
+            "Beast Within",
+            "Destroy target permanent. Its controller creates a 3/3 green Beast creature token.",
+            &["Instant"],
+            None,
+        );
+        assert!(detect_roles(&beast_within).contains(&"removal_cible".to_string()));
+
+        let wrath = card(
+            "Wrath of God",
+            "Destroy all creatures. They can't be regenerated.",
+            &["Sorcery"],
+            None,
+        );
+        assert!(detect_roles(&wrath).contains(&"wipe".to_string()));
+
+        let rampant_growth = card(
+            "Rampant Growth",
+            "Search your library for a basic land card and put it onto the battlefield tapped.",
+            &["Sorcery"],
+            None,
+        );
+        assert!(detect_roles(&rampant_growth).contains(&"ramp".to_string()));
+
+        let farseek = card(
+            "Farseek",
+            "Search your library for an Island, Swamp, Mountain, or Plains card and put it onto the battlefield tapped. Then shuffle.",
+            &["Sorcery"],
+            None,
+        );
+        assert!(detect_roles(&farseek).contains(&"ramp".to_string()));
+
+        let force_of_vigor = card(
+            "Force of Vigor",
+            "Destroy up to two target artifacts and/or enchantments.",
+            &["Instant"],
+            None,
+        );
+        assert!(detect_roles(&force_of_vigor).contains(&"removal_cible".to_string()));
     }
 
     #[test]
