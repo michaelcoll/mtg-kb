@@ -12,6 +12,7 @@ Choix retenus :
 - **Mode dégradé** : une Source en échec (réseau, HTTP 429, structure changée) n'interrompt pas l'analyse. L'erreur est portée dans le JSON et signalée dans le Rapport d'analyse.
 
 On a écarté trois options :
+
 - les appels côté Claude, non reproductibles et sans cache ;
 - une commande `kb recommend` séparée, qui obligerait le skill à fusionner lui-même les JSON ;
 - l'échec bloquant, qui rendrait l'analyse dépendante de la disponibilité de services tiers.
