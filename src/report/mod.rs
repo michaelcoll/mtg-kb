@@ -690,27 +690,7 @@ mod tests {
     pub(super) fn sample() -> EnrichedAnalysis {
         EnrichedAnalysis {
             analysis: AnalyzeResult {
-                commander: Card {
-                    name: "Atraxa, Praetors' Voice".to_string(),
-                    mana_cost: Some("{G}{W}{U}{B}".to_string()),
-                    mana_value: Some(4.0),
-                    type_line: None,
-                    types: vec!["Creature".to_string()],
-                    subtypes: vec![],
-                    supertypes: vec![],
-                    oracle_text: None,
-                    color_identity: vec![
-                        "B".to_string(),
-                        "G".to_string(),
-                        "U".to_string(),
-                        "W".to_string(),
-                    ],
-                    colors: vec![],
-                    keywords: vec![],
-                    power: None,
-                    toughness: None,
-                    loyalty: None,
-                },
+                commander: Card::named("Atraxa, Praetors' Voice", &["B", "G", "U", "W"]),
                 cards: vec![],
                 unresolved: vec![UnresolvedLine {
                     quantity: 1,
@@ -950,22 +930,7 @@ mod tests {
     fn appendix_lists_external_recommendations_not_turned_into_suggestions() {
         let mut enriched = sample();
         enriched.analysis.edhrec_recommendations = vec![EdhrecRecommendation {
-            card: Card {
-                name: "Sol Ring".to_string(),
-                mana_cost: None,
-                mana_value: None,
-                type_line: None,
-                types: vec![],
-                subtypes: vec![],
-                supertypes: vec![],
-                oracle_text: None,
-                color_identity: vec![],
-                colors: vec![],
-                keywords: vec![],
-                power: None,
-                toughness: None,
-                loyalty: None,
-            },
+            card: Card::named("Sol Ring", &[]),
             synergy: 0.42,
             inclusion_rate: 0.9,
             header: "High Synergy Cards".to_string(),
@@ -980,22 +945,7 @@ mod tests {
     fn appendix_excludes_external_recommendations_already_turned_into_suggestions() {
         let mut enriched = sample();
         enriched.analysis.edhrec_recommendations = vec![EdhrecRecommendation {
-            card: Card {
-                name: "Rampant Growth".to_string(),
-                mana_cost: None,
-                mana_value: None,
-                type_line: None,
-                types: vec![],
-                subtypes: vec![],
-                supertypes: vec![],
-                oracle_text: None,
-                color_identity: vec![],
-                colors: vec![],
-                keywords: vec![],
-                power: None,
-                toughness: None,
-                loyalty: None,
-            },
+            card: Card::named("Rampant Growth", &[]),
             synergy: 0.42,
             inclusion_rate: 0.9,
             header: "High Synergy Cards".to_string(),
@@ -1100,22 +1050,7 @@ mod tests {
     fn appendix_card_with_known_printing_becomes_a_hover_link() {
         let mut enriched = sample();
         enriched.analysis.edhrec_recommendations = vec![EdhrecRecommendation {
-            card: Card {
-                name: "Sol Ring".to_string(),
-                mana_cost: None,
-                mana_value: None,
-                type_line: None,
-                types: vec![],
-                subtypes: vec![],
-                supertypes: vec![],
-                oracle_text: None,
-                color_identity: vec![],
-                colors: vec![],
-                keywords: vec![],
-                power: None,
-                toughness: None,
-                loyalty: None,
-            },
+            card: Card::named("Sol Ring", &[]),
             synergy: 0.42,
             inclusion_rate: 0.9,
             header: "High Synergy Cards".to_string(),

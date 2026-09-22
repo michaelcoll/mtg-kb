@@ -97,7 +97,7 @@ pub(super) fn resolve_and_filter<M>(
         if resolved.len() >= MAX_RECOMMENDATIONS_PER_SOURCE {
             break;
         }
-        let Some(card) = db.card_by_name(&name)? else {
+        let Some(card) = db.card(&name)? else {
             unresolved_names.push(name);
             continue;
         };
@@ -111,7 +111,7 @@ pub(super) fn resolve_and_filter<M>(
         {
             continue;
         }
-        if db.is_legal_commander(&card.name)? != Some(true) {
+        if !card.legal_in_commander {
             continue;
         }
         resolved.push((card, meta));
@@ -123,47 +123,19 @@ pub(super) fn resolve_and_filter<M>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::Connection;
+    use crate::db::fixture::{CardsFixture, FixtureCard};
 
     fn fixture_db() -> (tempfile::TempDir, CardsDb) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("AllPrintings.sqlite");
-        let conn = Connection::open(&path).unwrap();
-        conn.execute_batch(
-            r#"
-            CREATE TABLE cards (
-                uuid TEXT, name TEXT, manaCost TEXT, manaValue REAL, type TEXT, types TEXT,
-                subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
-                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT,
-                faceName TEXT, side TEXT
-            );
-            CREATE TABLE cardLegalities (uuid TEXT, commander TEXT);
-
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
-                text, colorIdentity, colors, keywords, power, toughness, loyalty)
-                VALUES ('rampant', 'Rampant Growth', '{1}{G}', 2.0, 'Sorcery', 'Sorcery',
-                NULL, NULL, 'text', 'G', 'G', NULL, NULL, NULL, NULL);
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
-                text, colorIdentity, colors, keywords, power, toughness, loyalty)
-                VALUES ('bolt', 'Lightning Bolt', '{R}', 1.0, 'Instant', 'Instant',
-                NULL, NULL, 'text', 'R', 'R', NULL, NULL, NULL, NULL);
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
-                text, colorIdentity, colors, keywords, power, toughness, loyalty)
-                VALUES ('elves', 'Llanowar Elves', '{G}', 1.0, 'Creature', 'Creature',
-                'Elf', NULL, 'text', 'G', 'G', NULL, '1', '1', NULL);
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
-                text, colorIdentity, colors, keywords, power, toughness, loyalty)
-                VALUES ('channel', 'Channel', '{G}', 1.0, 'Sorcery', 'Sorcery',
-                NULL, NULL, 'text', 'G', 'G', NULL, NULL, NULL, NULL);
-
-            INSERT INTO cardLegalities VALUES ('rampant', 'Legal');
-            INSERT INTO cardLegalities VALUES ('bolt', 'Legal');
-            INSERT INTO cardLegalities VALUES ('elves', 'Legal');
-            INSERT INTO cardLegalities VALUES ('channel', 'Banned');
-            "#,
-        )
-        .unwrap();
-        (dir, CardsDb::open(&path).unwrap())
+        CardsFixture::new()
+            .cards([
+                FixtureCard::new("rampant", "Rampant Growth").identity("G"),
+                FixtureCard::new("bolt", "Lightning Bolt").identity("R"),
+                FixtureCard::new("elves", "Llanowar Elves").identity("G"),
+                FixtureCard::new("channel", "Channel")
+                    .identity("G")
+                    .banned(),
+            ])
+            .build()
     }
 
     #[test]
@@ -237,41 +209,14 @@ mod tests {
 
     #[test]
     fn caps_at_thirty_kept_recommendations() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("AllPrintings.sqlite");
-        let conn = Connection::open(&path).unwrap();
-        conn.execute_batch(
-            r#"
-            CREATE TABLE cards (
-                uuid TEXT, name TEXT, manaCost TEXT, manaValue REAL, type TEXT, types TEXT,
-                subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
-                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT,
-                faceName TEXT, side TEXT
-            );
-            CREATE TABLE cardLegalities (uuid TEXT, commander TEXT);
-            "#,
-        )
-        .unwrap();
-        let mut items = Vec::new();
-        for i in 0..40 {
-            let uuid = format!("card-{i}");
-            let name = format!("Test Card {i}");
-            conn.execute(
-                "INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, \
-                 supertypes, text, colorIdentity, colors, keywords, power, toughness, loyalty) \
-                 VALUES (?1, ?2, '{G}', 1.0, 'Creature', 'Creature', NULL, NULL, \
-                 'text', 'G', 'G', NULL, '1', '1', NULL)",
-                rusqlite::params![uuid, name],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO cardLegalities VALUES (?1, 'Legal')",
-                rusqlite::params![uuid],
-            )
-            .unwrap();
-            items.push((name, i as f64));
-        }
-        let db = CardsDb::open(&path).unwrap();
+        let items: Vec<(String, f64)> = (0..40)
+            .map(|i| (format!("Test Card {i}"), i as f64))
+            .collect();
+        let (_dir, db) = CardsFixture::new()
+            .cards((0..40).map(|i| {
+                FixtureCard::new(&format!("card-{i}"), &format!("Test Card {i}")).identity("G")
+            }))
+            .build();
         let (resolved, _) =
             resolve_and_filter(items, &db, &["G".to_string()], &HashSet::new()).unwrap();
         assert_eq!(resolved.len(), MAX_RECOMMENDATIONS_PER_SOURCE);
@@ -308,22 +253,7 @@ mod tests {
     fn sample_analysis() -> AnalyzeResult {
         use crate::model::*;
         AnalyzeResult {
-            commander: Card {
-                name: "Test Commander".to_string(),
-                mana_cost: None,
-                mana_value: None,
-                type_line: None,
-                types: vec![],
-                subtypes: vec![],
-                supertypes: vec![],
-                oracle_text: None,
-                color_identity: vec!["G".to_string()],
-                colors: vec![],
-                keywords: vec![],
-                power: None,
-                toughness: None,
-                loyalty: None,
-            },
+            commander: Card::named("Test Commander", &["G"]),
             cards: vec![],
             unresolved: vec![],
             card_count: 100,

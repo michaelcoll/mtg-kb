@@ -235,54 +235,17 @@ mod tests {
     }
 
     fn fixture_db_and_analysis() -> (tempfile::TempDir, CardsDb, AnalyzeResult) {
-        use rusqlite::Connection;
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("AllPrintings.sqlite");
-        let conn = Connection::open(&path).unwrap();
-        conn.execute_batch(
-            r#"
-            CREATE TABLE cards (
-                uuid TEXT, name TEXT, manaCost TEXT, manaValue REAL, type TEXT, types TEXT,
-                subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
-                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT,
-                faceName TEXT, side TEXT
-            );
-            CREATE TABLE cardLegalities (uuid TEXT, commander TEXT);
-
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
-                text, colorIdentity, colors, keywords, power, toughness, loyalty)
-                VALUES ('rampant', 'Rampant Growth', '{1}{G}', 2.0, 'Sorcery', 'Sorcery',
-                NULL, NULL, 'text', 'G', 'G', NULL, NULL, NULL, NULL);
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
-                text, colorIdentity, colors, keywords, power, toughness, loyalty)
-                VALUES ('solring', 'Sol Ring', '{1}', 1.0, 'Artifact', 'Artifact',
-                NULL, NULL, 'text', NULL, NULL, NULL, NULL, NULL, NULL);
-
-            INSERT INTO cardLegalities VALUES ('rampant', 'Legal');
-            INSERT INTO cardLegalities VALUES ('solring', 'Legal');
-            "#,
-        )
-        .unwrap();
-        let db = CardsDb::open(&path).unwrap();
+        use crate::db::fixture::{CardsFixture, FixtureCard};
+        let (dir, db) = CardsFixture::new()
+            .cards([
+                FixtureCard::new("rampant", "Rampant Growth").identity("G"),
+                FixtureCard::new("solring", "Sol Ring"),
+            ])
+            .build();
 
         use crate::model::*;
         let analysis = AnalyzeResult {
-            commander: Card {
-                name: "Test Commander".to_string(),
-                mana_cost: None,
-                mana_value: None,
-                type_line: None,
-                types: vec![],
-                subtypes: vec![],
-                supertypes: vec![],
-                oracle_text: None,
-                color_identity: vec!["G".to_string()],
-                colors: vec![],
-                keywords: vec![],
-                power: None,
-                toughness: None,
-                loyalty: None,
-            },
+            commander: Card::named("Test Commander", &["G"]),
             cards: vec![],
             unresolved: vec![],
             card_count: 100,

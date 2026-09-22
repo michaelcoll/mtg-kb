@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use anyhow::Result;
 
-use crate::db::cards::{CardsDb, SearchFilters};
+use crate::db::cards::CardsDb;
 use crate::model::Candidate;
 
 use super::ranking::sort_desc_by_score_then_name;
@@ -22,12 +22,7 @@ pub fn find_candidates(
     major_themes: &HashSet<String>,
     weak_roles: &[String],
 ) -> Result<Vec<Candidate>> {
-    let pool = db.search(&SearchFilters {
-        legal_in_format: Some("commander".to_string()),
-        color_identity_subset_of: Some(color_identity.to_vec()),
-        limit: 0,
-        ..Default::default()
-    })?;
+    let pool = db.commander_pool(color_identity)?;
 
     let scored: Vec<Candidate> = pool
         .into_iter()
@@ -95,40 +90,42 @@ fn top_matches(scored: &[Candidate], matches: impl Fn(&Candidate) -> bool) -> Ve
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::Connection;
+    use crate::db::fixture::{CardsFixture, FixtureCard};
 
     fn fixture_db() -> (tempfile::TempDir, CardsDb) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("AllPrintings.sqlite");
-        let conn = Connection::open(&path).unwrap();
-        conn.execute_batch(
-            r#"
-            CREATE TABLE cards (
-                uuid TEXT, name TEXT, manaCost TEXT, manaValue REAL, type TEXT, types TEXT,
-                subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
-                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT
-            );
-            CREATE TABLE cardLegalities (uuid TEXT, commander TEXT);
+        CardsFixture::new()
+            .cards([
+                FixtureCard::new("rampant", "Rampant Growth")
+                    .types("Sorcery")
+                    .text(
+                        "Search your library for a basic land card and put it onto the \
+                         battlefield tapped.",
+                    )
+                    .identity("G"),
+                FixtureCard::new("krenko", "Krenko, Mob Boss")
+                    .types("Creature")
+                    .subtypes("Goblin")
+                    .supertypes("Legendary")
+                    .text("Whenever Krenko attacks, create X 1/1 red Goblin creature tokens.")
+                    .identity("R"),
+                FixtureCard::new("bear", "Grizzly Bears")
+                    .types("Creature")
+                    .subtypes("Bear")
+                    .identity("G"),
+                FixtureCard::new("offcolor", "Lightning Bolt")
+                    .types("Instant")
+                    .text("Deal 3 damage to any target.")
+                    .identity("R"),
+            ])
+            .build()
+    }
 
-            INSERT INTO cards VALUES ('rampant', 'Rampant Growth', '{1}{G}', 2.0, 'Sorcery', 'Sorcery',
-                NULL, NULL, 'Search your library for a basic land card and put it onto the battlefield tapped.',
-                'G', 'G', NULL, NULL, NULL, NULL);
-            INSERT INTO cards VALUES ('krenko', 'Krenko, Mob Boss', '{2}{R}{R}', 4.0, 'Legendary Creature', 'Creature',
-                'Goblin', 'Legendary', 'Whenever Krenko attacks, create X 1/1 red Goblin creature tokens.',
-                'R', 'R', NULL, '3', '3', NULL);
-            INSERT INTO cards VALUES ('bear', 'Grizzly Bears', '{1}{G}', 2.0, 'Creature', 'Creature',
-                'Bear', NULL, '', 'G', 'G', NULL, '2', '2', NULL);
-            INSERT INTO cards VALUES ('offcolor', 'Lightning Bolt', '{R}', 1.0, 'Instant', 'Instant',
-                NULL, NULL, 'Deal 3 damage to any target.', 'R', 'R', NULL, NULL, NULL, NULL);
-
-            INSERT INTO cardLegalities VALUES ('rampant', 'Legal');
-            INSERT INTO cardLegalities VALUES ('krenko', 'Legal');
-            INSERT INTO cardLegalities VALUES ('bear', 'Legal');
-            INSERT INTO cardLegalities VALUES ('offcolor', 'Legal');
-            "#,
-        )
-        .unwrap();
-        (dir, CardsDb::open(&path).unwrap())
+    fn elf_dork(uuid: &str, name: &str) -> FixtureCard {
+        FixtureCard::new(uuid, name)
+            .types("Creature")
+            .subtypes("Elf")
+            .text("{T}: Add {G}.")
+            .identity("G")
     }
 
     /// Base cartes de plus de 500 Cartes légales Commander mono-vert,
@@ -141,60 +138,27 @@ mod tests {
     /// est vrai, toutes les Cartes (dont "Z…") sont des sources de ramp
     /// Elfes, pour les tests de plafond par panier.
     fn large_fixture_db(card_count: usize, bulk_matches: bool) -> (tempfile::TempDir, CardsDb) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("AllPrintings.sqlite");
-        let conn = Connection::open(&path).unwrap();
-        conn.execute_batch(
-            r#"
-            CREATE TABLE cards (
-                uuid TEXT, name TEXT, manaCost TEXT, manaValue REAL, type TEXT, types TEXT,
-                subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
-                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT
-            );
-            CREATE TABLE cardLegalities (uuid TEXT, commander TEXT);
-            "#,
-        )
-        .unwrap();
-
         let letters: Vec<char> = ('A'..='Z').collect();
-        for i in 0..card_count {
+        let bulk = (0..card_count).map(|i| {
             let letter = letters[i % letters.len()];
             let uuid = format!("card-{i}");
             let name = format!("{letter} Mana Dork {i}");
             if bulk_matches {
-                conn.execute(
-                    "INSERT INTO cards VALUES (?1, ?2, '{G}', 1.0, 'Creature', 'Creature', 'Elf', NULL, \
-                     '{T}: Add {G}.', 'G', 'G', NULL, '1', '1', NULL)",
-                    rusqlite::params![uuid, name],
-                )
-                .unwrap();
+                elf_dork(&uuid, &name)
             } else {
-                conn.execute(
-                    "INSERT INTO cards VALUES (?1, ?2, '{1}{G}', 2.0, 'Creature', 'Creature', 'Bear', NULL, \
-                     '', 'G', 'G', NULL, '2', '2', NULL)",
-                    rusqlite::params![uuid, name],
-                )
-                .unwrap();
+                FixtureCard::new(&uuid, &name)
+                    .types("Creature")
+                    .subtypes("Bear")
+                    .identity("G")
             }
-            conn.execute(
-                "INSERT INTO cardLegalities VALUES (?1, 'Legal')",
-                rusqlite::params![uuid],
-            )
-            .unwrap();
-        }
+        });
         // Une Carte nommément en "Z..." pour un test explicite et lisible :
         // toujours une source de ramp Elfe, qu'elle se distingue (bulk non
         // matchant) ou se fonde dans la masse (bulk matchant).
-        conn.execute(
-            "INSERT INTO cards VALUES ('z-card', 'Zephyr Ramp Elemental', '{G}', 1.0, 'Creature', 'Creature', \
-             'Elf', NULL, '{T}: Add {G}.', 'G', 'G', NULL, '1', '1', NULL)",
-            [],
-        )
-        .unwrap();
-        conn.execute("INSERT INTO cardLegalities VALUES ('z-card', 'Legal')", [])
-            .unwrap();
-
-        (dir, CardsDb::open(&path).unwrap())
+        CardsFixture::new()
+            .cards(bulk)
+            .card(elf_dork("z-card", "Zephyr Ramp Elemental"))
+            .build()
     }
 
     #[test]

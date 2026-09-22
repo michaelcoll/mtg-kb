@@ -141,8 +141,8 @@ fn print_table(cards: &[Card]) {
         println!(
             "{:<30} {:<6} {}",
             card.name,
-            card.mana_cost.clone().unwrap_or_default(),
-            card.type_line.clone().unwrap_or_default()
+            card.front.mana_cost.clone().unwrap_or_default(),
+            card.front.type_line.clone().unwrap_or_default()
         );
     }
 }
@@ -150,55 +150,61 @@ fn print_table(cards: &[Card]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::Connection;
+    use crate::db::fixture::{CardsFixture, FixtureCard};
 
     fn fixture_db() -> (tempfile::TempDir, CardsDb) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("AllPrintings.sqlite");
-        let conn = Connection::open(&path).unwrap();
-        conn.execute_batch(
-            r#"
-            CREATE TABLE cards (
-                uuid TEXT, name TEXT, manaCost TEXT, manaValue REAL, type TEXT, types TEXT,
-                subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
-                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT
-            );
-            CREATE TABLE cardLegalities (uuid TEXT, commander TEXT);
-
-            INSERT INTO cards VALUES ('doom-blade', 'Doom Blade', '{1}{B}', 2.0, 'Instant', 'Instant',
-                NULL, NULL, 'Destroy target creature.', 'B', 'B', NULL, NULL, NULL, NULL);
-            INSERT INTO cards VALUES ('beast-within', 'Beast Within', '{2}{G}', 3.0, 'Sorcery', 'Sorcery',
-                NULL, NULL,
-                'Destroy target permanent. Its controller creates a 3/3 green Beast creature token.',
-                'G', 'G', NULL, NULL, NULL, NULL);
-            INSERT INTO cards VALUES ('terminate', 'Terminate', '{B}{R}', 2.0, 'Instant', 'Instant',
-                NULL, NULL, 'Destroy target creature or planeswalker.', 'B, R', 'B, R', NULL, NULL, NULL, NULL);
-            INSERT INTO cards VALUES ('damnation', 'Damnation', '{2}{B}{B}', 4.0, 'Sorcery', 'Sorcery',
-                NULL, NULL, 'Destroy all creatures.', 'B', 'B', NULL, NULL, NULL, NULL);
-            INSERT INTO cards VALUES ('banned-removal', 'Hypothetical Banned Removal', '{B}', 1.0,
-                'Instant', 'Instant', NULL, NULL, 'Destroy target creature.', 'B', 'B', NULL, NULL, NULL, NULL);
-            INSERT INTO cards VALUES ('vanilla-bear', 'Vanilla Bear', '{1}{G}', 2.0, 'Creature', 'Creature',
-                'Bear', NULL, '', 'G', 'G', NULL, '2', '2', NULL);
-            INSERT INTO cards VALUES ('rampant', 'Rampant Growth', '{1}{G}', 2.0, 'Sorcery', 'Sorcery',
-                NULL, NULL,
-                'Search your library for a basic land card and put it onto the battlefield tapped.',
-                'G', 'G', NULL, NULL, NULL, NULL);
-            INSERT INTO cards VALUES ('goblin-king', 'Goblin King', '{1}{R}{R}', 3.0,
-                'Creature — Goblin King', 'Creature', 'Goblin', NULL, 'Other Goblins get +1/+1.',
-                'R', 'R', NULL, '2', '2', NULL);
-
-            INSERT INTO cardLegalities VALUES ('doom-blade', 'Legal');
-            INSERT INTO cardLegalities VALUES ('beast-within', 'Legal');
-            INSERT INTO cardLegalities VALUES ('terminate', 'Legal');
-            INSERT INTO cardLegalities VALUES ('damnation', 'Legal');
-            INSERT INTO cardLegalities VALUES ('banned-removal', 'Banned');
-            INSERT INTO cardLegalities VALUES ('vanilla-bear', 'Legal');
-            INSERT INTO cardLegalities VALUES ('rampant', 'Legal');
-            INSERT INTO cardLegalities VALUES ('goblin-king', 'Legal');
-            "#,
-        )
-        .unwrap();
-        (dir, CardsDb::open(&path).unwrap())
+        CardsFixture::new()
+            .cards([
+                FixtureCard::new("doom-blade", "Doom Blade")
+                    .mana("{1}{B}", 2.0)
+                    .types("Instant")
+                    .text("Destroy target creature.")
+                    .identity("B"),
+                FixtureCard::new("beast-within", "Beast Within")
+                    .mana("{2}{G}", 3.0)
+                    .types("Sorcery")
+                    .text(
+                        "Destroy target permanent. Its controller creates a 3/3 green Beast \
+                         creature token.",
+                    )
+                    .identity("G"),
+                FixtureCard::new("terminate", "Terminate")
+                    .mana("{B}{R}", 2.0)
+                    .types("Instant")
+                    .text("Destroy target creature or planeswalker.")
+                    .identity("B, R"),
+                FixtureCard::new("damnation", "Damnation")
+                    .mana("{2}{B}{B}", 4.0)
+                    .types("Sorcery")
+                    .text("Destroy all creatures.")
+                    .identity("B"),
+                FixtureCard::new("banned-removal", "Hypothetical Banned Removal")
+                    .mana("{B}", 1.0)
+                    .types("Instant")
+                    .text("Destroy target creature.")
+                    .identity("B")
+                    .banned(),
+                FixtureCard::new("vanilla-bear", "Vanilla Bear")
+                    .mana("{1}{G}", 2.0)
+                    .types("Creature")
+                    .subtypes("Bear")
+                    .identity("G"),
+                FixtureCard::new("rampant", "Rampant Growth")
+                    .mana("{1}{G}", 2.0)
+                    .types("Sorcery")
+                    .text(
+                        "Search your library for a basic land card and put it onto the \
+                         battlefield tapped.",
+                    )
+                    .identity("G"),
+                FixtureCard::new("goblin-king", "Goblin King")
+                    .mana("{1}{R}{R}", 3.0)
+                    .types("Creature")
+                    .subtypes("Goblin")
+                    .text("Other Goblins get +1/+1.")
+                    .identity("R"),
+            ])
+            .build()
     }
 
     #[allow(clippy::too_many_arguments)]

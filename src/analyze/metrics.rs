@@ -3,15 +3,26 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use crate::model::{Card, ManaBase, ManaCurve, ManaCurveBucket, ResolvedCard};
+use crate::model::{Card, Face, ManaBase, ManaCurve, ManaCurveBucket, ResolvedCard};
 
 const COLORS: [&str; 5] = ["W", "U", "B", "R", "G"];
 
-pub fn is_land(card: &Card) -> bool {
-    card.types.iter().any(|t| t == "Land")
+/// Union des Rôles des Faces (ADR 0004), dans l'ordre de première apparition.
+pub fn detect_roles(card: &Card) -> Vec<String> {
+    union_over_faces(card, detect_face_roles)
 }
 
-pub fn detect_roles(card: &Card) -> Vec<String> {
+pub(crate) fn union_over_faces(card: &Card, detect: fn(&Face) -> Vec<String>) -> Vec<String> {
+    let mut union: Vec<String> = Vec::new();
+    for label in card.faces().flat_map(detect) {
+        if !union.contains(&label) {
+            union.push(label);
+        }
+    }
+    union
+}
+
+fn detect_face_roles(face: &Face) -> Vec<String> {
     static RAMP_LAND_SEARCH: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?i)search your library for (a|up to \w+|\w+) .*land").unwrap()
     });
@@ -48,12 +59,12 @@ pub fn detect_roles(card: &Card) -> Vec<String> {
     });
 
     let mut roles = Vec::new();
-    let text = card.oracle_text.as_deref().unwrap_or("");
+    let text = face.oracle_text.as_deref().unwrap_or("");
 
-    if is_land(card) {
+    if face.is_land() {
         roles.push("terrain".to_string());
     }
-    if !is_land(card) && (RAMP_LAND_SEARCH.is_match(text) || MANA_ABILITY.is_match(text)) {
+    if !face.is_land() && (RAMP_LAND_SEARCH.is_match(text) || MANA_ABILITY.is_match(text)) {
         roles.push("ramp".to_string());
     }
     if DRAW.is_match(text) {
@@ -68,7 +79,7 @@ pub fn detect_roles(card: &Card) -> Vec<String> {
         roles.push("wipe".to_string());
     }
     if PROTECTION.is_match(text)
-        || card
+        || face
             .keywords
             .iter()
             .any(|k| k == "Hexproof" || k == "Indestructible")
@@ -85,7 +96,7 @@ pub fn mana_curve(cards: &[ResolvedCard]) -> ManaCurve {
     let mut nonland_count = 0u32;
 
     for resolved in cards {
-        if is_land(&resolved.card) {
+        if resolved.card.is_land() {
             continue;
         }
         let mv = resolved.card.mana_value.unwrap_or(0.0);
@@ -139,27 +150,29 @@ fn land_color_sources(
     // Sans référence à l'Identité de couleur (Exotic Orchard…) : les 5 couleurs.
     static ADD_ANY_COLOR: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?i)add (one|a) mana of any color").unwrap());
-    let text = card.oracle_text.as_deref().unwrap_or("");
     let mut colors_seen = std::collections::HashSet::new();
-    for add_caps in ADD_CLAUSE.captures_iter(text) {
-        let clause = add_caps.get(1).unwrap().as_str();
-        for symbol_caps in SYMBOL.captures_iter(clause) {
-            let symbol = symbol_caps.get(1).unwrap().as_str();
-            for color in COLORS {
-                if symbol.contains(color) {
-                    colors_seen.insert(color);
+    for face in card.faces().filter(|f| f.is_land()) {
+        let text = face.oracle_text.as_deref().unwrap_or("");
+        for add_caps in ADD_CLAUSE.captures_iter(text) {
+            let clause = add_caps.get(1).unwrap().as_str();
+            for symbol_caps in SYMBOL.captures_iter(clause) {
+                let symbol = symbol_caps.get(1).unwrap().as_str();
+                for color in COLORS {
+                    if symbol.contains(color) {
+                        colors_seen.insert(color);
+                    }
                 }
             }
         }
-    }
-    if ADD_ANY_COLOR_COLOR_IDENTITY.is_match(text) {
-        for color in COLORS {
-            if commander_color_identity.iter().any(|c| c == color) {
-                colors_seen.insert(color);
+        if ADD_ANY_COLOR_COLOR_IDENTITY.is_match(text) {
+            for color in COLORS {
+                if commander_color_identity.iter().any(|c| c == color) {
+                    colors_seen.insert(color);
+                }
             }
+        } else if ADD_ANY_COLOR.is_match(text) {
+            colors_seen.extend(COLORS);
         }
-    } else if ADD_ANY_COLOR.is_match(text) {
-        colors_seen.extend(COLORS);
     }
     for color in colors_seen {
         *counts.entry(color.to_string()).or_insert(0) += quantity;
@@ -172,7 +185,7 @@ pub fn mana_base(cards: &[ResolvedCard], commander: &Card) -> ManaBase {
     let mut symbols_by_color: BTreeMap<String, u32> = BTreeMap::new();
 
     for resolved in cards {
-        if is_land(&resolved.card) {
+        if resolved.card.is_land() {
             land_count += resolved.quantity;
             land_color_sources(
                 &resolved.card,
@@ -180,12 +193,17 @@ pub fn mana_base(cards: &[ResolvedCard], commander: &Card) -> ManaBase {
                 &commander.color_identity,
                 &mut sources_by_color,
             );
-        } else if let Some(cost) = &resolved.card.mana_cost {
-            count_color_symbols(cost, &mut symbols_by_color);
+        }
+        for face in resolved.card.faces().filter(|f| !f.is_land()) {
+            if let Some(cost) = &face.mana_cost {
+                count_color_symbols(cost, &mut symbols_by_color);
+            }
         }
     }
-    if let Some(cost) = &commander.mana_cost {
-        count_color_symbols(cost, &mut symbols_by_color);
+    for face in commander.faces() {
+        if let Some(cost) = &face.mana_cost {
+            count_color_symbols(cost, &mut symbols_by_color);
+        }
     }
 
     ManaBase {
@@ -301,23 +319,72 @@ mod tests {
     use super::*;
     use crate::model::Card;
 
-    fn card(name: &str, oracle_text: &str, types: &[&str], mana_cost: Option<&str>) -> Card {
-        Card {
+    fn face(name: &str, oracle_text: &str, types: &[&str], mana_cost: Option<&str>) -> Face {
+        Face {
             name: name.to_string(),
             mana_cost: mana_cost.map(str::to_string),
-            mana_value: None,
-            type_line: None,
             types: types.iter().map(|t| t.to_string()).collect(),
-            subtypes: vec![],
-            supertypes: vec![],
             oracle_text: Some(oracle_text.to_string()),
-            color_identity: vec![],
-            colors: vec![],
-            keywords: vec![],
-            power: None,
-            toughness: None,
-            loyalty: None,
+            ..Face::default()
         }
+    }
+
+    fn card(name: &str, oracle_text: &str, types: &[&str], mana_cost: Option<&str>) -> Card {
+        Card::from_face(face(name, oracle_text, types, mana_cost))
+    }
+
+    fn bala_ged_recovery() -> Card {
+        Card {
+            back: Some(face(
+                "Bala Ged Sanctuary",
+                "As Bala Ged Sanctuary enters, you may pay 3 life.\n{T}: Add {G}.",
+                &["Land"],
+                None,
+            )),
+            ..card(
+                "Bala Ged Recovery",
+                "Return target card from your graveyard to your hand.",
+                &["Sorcery"],
+                Some("{2}{G}"),
+            )
+        }
+    }
+
+    #[test]
+    fn a_multi_face_card_has_the_union_of_its_faces_roles() {
+        let pathway = Card {
+            back: Some(face("Back", "Draw two cards.", &["Sorcery"], None)),
+            ..card("Front", "Destroy target creature.", &["Instant"], None)
+        };
+        assert_eq!(
+            detect_roles(&pathway),
+            vec!["removal_cible".to_string(), "pioche".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_spell_land_modal_card_counts_as_a_land_and_a_green_source() {
+        let resolved = ResolvedCard {
+            quantity: 1,
+            roles: vec![],
+            themes: vec![],
+            card: bala_ged_recovery(),
+        };
+        let base = mana_base(&[resolved], &card("Commander", "", &["Creature"], None));
+        assert_eq!(base.land_count, 1);
+        assert_eq!(base.sources_by_color.get("G"), Some(&1));
+    }
+
+    #[test]
+    fn a_spell_land_modal_card_counts_the_spell_face_symbols() {
+        let resolved = ResolvedCard {
+            quantity: 1,
+            roles: vec![],
+            themes: vec![],
+            card: bala_ged_recovery(),
+        };
+        let base = mana_base(&[resolved], &card("Commander", "", &["Creature"], None));
+        assert_eq!(base.symbols_by_color.get("G"), Some(&1));
     }
 
     #[test]
