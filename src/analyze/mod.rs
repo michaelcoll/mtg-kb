@@ -36,7 +36,7 @@ pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Resul
         );
     }
     let commander_name = &aggregated_commander[0].name;
-    let Some(commander) = db.card_by_name(commander_name)? else {
+    let Some(commander) = db.card(commander_name)? else {
         bail!("Commandant introuvable dans la Base cartes : « {commander_name} »");
     };
 
@@ -46,7 +46,7 @@ pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Resul
     let mut weaknesses = Vec::new();
 
     for line in aggregate(decklist.deck) {
-        match db.card_by_name(&line.name)? {
+        match db.card(&line.name)? {
             Some(card) => cards.push(ResolvedCard {
                 quantity: line.quantity,
                 roles: metrics::detect_roles(&card),
@@ -70,7 +70,7 @@ pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Resul
     }
 
     for resolved in &cards {
-        if resolved.quantity > 1 && !is_basic_land(&resolved.card) {
+        if resolved.quantity > 1 && !resolved.card.is_basic_land() {
             construction_errors.push(format!(
                 "« {} » apparaît {} fois : le Deck doit être singleton hors terrains de base",
                 resolved.card.name, resolved.quantity
@@ -82,12 +82,11 @@ pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Resul
                 resolved.card.name, resolved.card.color_identity, commander.color_identity
             ));
         }
-        match db.is_legal_commander(&resolved.card.name)? {
-            Some(false) | None => weaknesses.push(format!(
+        if !resolved.card.legal_in_commander {
+            weaknesses.push(format!(
                 "« {} » n'est pas légale en Commander",
                 resolved.card.name
-            )),
-            Some(true) => {}
+            ));
         }
     }
 
@@ -183,10 +182,6 @@ fn aggregate(lines: Vec<DecklistLine>) -> Vec<DecklistLine> {
     merged
 }
 
-pub(crate) fn is_basic_land(card: &crate::model::Card) -> bool {
-    card.supertypes.iter().any(|t| t == "Basic") && card.types.iter().any(|t| t == "Land")
-}
-
 fn is_color_identity_subset(card_identity: &[String], commander_identity: &[String]) -> bool {
     card_identity
         .iter()
@@ -196,53 +191,43 @@ fn is_color_identity_subset(card_identity: &[String], commander_identity: &[Stri
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::Connection;
+    use crate::db::fixture::{CardsFixture, FixtureCard};
+
+    fn atraxa() -> FixtureCard {
+        FixtureCard::new("atraxa", "Atraxa, Praetors' Voice")
+            .mana("{G}{W}{U}{B}", 4.0)
+            .types("Creature")
+            .subtypes("Phyrexian, Angel, Horror")
+            .supertypes("Legendary")
+            .identity("B, G, U, W")
+    }
+
+    fn forest() -> FixtureCard {
+        FixtureCard::new("forest", "Forest")
+            .types("Land")
+            .subtypes("Forest")
+            .supertypes("Basic")
+    }
 
     fn fixture_db() -> (tempfile::TempDir, CardsDb) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("AllPrintings.sqlite");
-        let conn = Connection::open(&path).unwrap();
-        conn.execute_batch(
-            r#"
-            CREATE TABLE cards (
-                uuid TEXT, name TEXT, manaCost TEXT, manaValue REAL, type TEXT, types TEXT,
-                subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
-                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT,
-                faceName TEXT, side TEXT
-            );
-            CREATE TABLE cardLegalities (uuid TEXT, commander TEXT);
-
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
-                text, colorIdentity, colors, keywords, power, toughness, loyalty)
-                VALUES ('atraxa', 'Atraxa, Praetors'' Voice', '{G}{W}{U}{B}', 4.0,
-                'Legendary Creature — Phyrexian Angel Horror', 'Creature', 'Phyrexian, Angel, Horror',
-                'Legendary', 'text', 'B, G, U, W', 'W, U, B, G', NULL, '4', '4', NULL);
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
-                text, colorIdentity, colors, keywords, power, toughness, loyalty)
-                VALUES ('solring', 'Sol Ring', '{1}', 1.0, 'Artifact', 'Artifact',
-                NULL, NULL, '{T}: Add {C}{C}.', NULL, NULL, NULL, NULL, NULL, NULL);
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
-                text, colorIdentity, colors, keywords, power, toughness, loyalty)
-                VALUES ('forest', 'Forest', NULL, 0.0, 'Basic Land — Forest', 'Land',
-                'Forest', 'Basic', 'text', NULL, NULL, NULL, NULL, NULL, NULL);
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
-                text, colorIdentity, colors, keywords, power, toughness, loyalty)
-                VALUES ('lotus', 'Black Lotus', '{0}', 0.0, 'Artifact', 'Artifact',
-                NULL, NULL, 'text', NULL, NULL, NULL, NULL, NULL, NULL);
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
-                text, colorIdentity, colors, keywords, power, toughness, loyalty)
-                VALUES ('shock', 'Shock', '{R}', 1.0, 'Instant', 'Instant',
-                NULL, NULL, 'text', 'R', 'R', NULL, NULL, NULL, NULL);
-
-            INSERT INTO cardLegalities VALUES ('atraxa', 'Legal');
-            INSERT INTO cardLegalities VALUES ('solring', 'Legal');
-            INSERT INTO cardLegalities VALUES ('forest', 'Legal');
-            INSERT INTO cardLegalities VALUES ('lotus', 'Banned');
-            INSERT INTO cardLegalities VALUES ('shock', 'Legal');
-            "#,
-        )
-        .unwrap();
-        (dir, CardsDb::open(&path).unwrap())
+        CardsFixture::new()
+            .cards([
+                atraxa(),
+                FixtureCard::new("solring", "Sol Ring")
+                    .mana("{1}", 1.0)
+                    .types("Artifact")
+                    .text("{T}: Add {C}{C}."),
+                forest(),
+                FixtureCard::new("lotus", "Black Lotus")
+                    .mana("{0}", 0.0)
+                    .types("Artifact")
+                    .banned(),
+                FixtureCard::new("shock", "Shock")
+                    .mana("{R}", 1.0)
+                    .types("Instant")
+                    .identity("R"),
+            ])
+            .build()
     }
 
     fn deck_of(n: u32, extra: &str) -> String {
@@ -370,62 +355,42 @@ mod tests {
         assert_eq!(result.role_counts.get("ramp"), Some(&1));
     }
 
+    fn goblin(uuid: &str, name: &str, identity: &str) -> FixtureCard {
+        FixtureCard::new(uuid, name)
+            .types("Creature")
+            .subtypes("Goblin")
+            .identity(identity)
+    }
+
+    /// `count` Gobelins d'identité `identity`, et les lignes de Decklist qui
+    /// les contiennent.
+    fn goblin_grunts(count: u32, identity: &str) -> (Vec<FixtureCard>, String) {
+        let cards: Vec<FixtureCard> = (0..count)
+            .map(|i| {
+                goblin(
+                    &format!("goblin-deck-{i}"),
+                    &format!("Goblin Grunt {i}"),
+                    identity,
+                )
+            })
+            .collect();
+        let deck_lines = (0..count)
+            .map(|i| format!("1 Goblin Grunt {i}\n"))
+            .collect();
+        (cards, deck_lines)
+    }
+
     fn fixture_db_with_goblin_pool(goblins_in_deck: u32) -> (tempfile::TempDir, CardsDb, String) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("AllPrintings.sqlite");
-        let conn = Connection::open(&path).unwrap();
-        conn.execute_batch(
-            r#"
-            CREATE TABLE cards (
-                uuid TEXT, name TEXT, manaCost TEXT, manaValue REAL, type TEXT, types TEXT,
-                subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
-                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT,
-                faceName TEXT, side TEXT
-            );
-            CREATE TABLE cardLegalities (uuid TEXT, commander TEXT);
-
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
-                text, colorIdentity, colors, keywords, power, toughness, loyalty)
-                VALUES ('atraxa', 'Atraxa, Praetors'' Voice', '{G}{W}{U}{B}', 4.0,
-                'Legendary Creature — Phyrexian Angel Horror', 'Creature', 'Phyrexian, Angel, Horror',
-                'Legendary', 'text', 'B, G, U, W', 'W, U, B, G', NULL, '4', '4', NULL);
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
-                text, colorIdentity, colors, keywords, power, toughness, loyalty)
-                VALUES ('forest', 'Forest', NULL, 0.0, 'Basic Land — Forest', 'Land',
-                'Forest', 'Basic', 'text', NULL, NULL, NULL, NULL, NULL, NULL);
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
-                text, colorIdentity, colors, keywords, power, toughness, loyalty)
-                VALUES ('goblin-pool', 'Goblin Raider', '{1}{G}', 2.0, 'Creature',
-                'Creature', 'Goblin', NULL, '', 'G', 'G', NULL, '2', '2', NULL);
-
-            INSERT INTO cardLegalities VALUES ('atraxa', 'Legal');
-            INSERT INTO cardLegalities VALUES ('forest', 'Legal');
-            INSERT INTO cardLegalities VALUES ('goblin-pool', 'Legal');
-            "#,
-        )
-        .unwrap();
-
-        let mut deck_lines = String::new();
-        for i in 0..goblins_in_deck {
-            let uuid = format!("goblin-deck-{i}");
-            let name = format!("Goblin Grunt {i}");
-            conn.execute(
-                "INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, \
-                 supertypes, text, colorIdentity, colors, keywords, power, toughness, loyalty) \
-                 VALUES (?1, ?2, '{G}', 1.0, 'Creature', 'Creature', 'Goblin', \
-                 NULL, '', 'G', 'G', NULL, '1', '1', NULL)",
-                rusqlite::params![uuid, name],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO cardLegalities VALUES (?1, 'Legal')",
-                rusqlite::params![uuid],
-            )
-            .unwrap();
-            deck_lines.push_str(&format!("1 {name}\n"));
-        }
-
-        (dir, CardsDb::open(&path).unwrap(), deck_lines)
+        let (grunts, deck_lines) = goblin_grunts(goblins_in_deck, "G");
+        let (dir, db) = CardsFixture::new()
+            .cards([
+                atraxa(),
+                forest(),
+                goblin("goblin-pool", "Goblin Raider", "G"),
+            ])
+            .cards(grunts)
+            .build();
+        (dir, db, deck_lines)
     }
 
     #[test]
@@ -461,62 +426,16 @@ mod tests {
 
     #[test]
     fn the_commander_does_not_count_towards_the_major_theme_threshold() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("AllPrintings.sqlite");
-        let conn = Connection::open(&path).unwrap();
-        conn.execute_batch(
-            r#"
-            CREATE TABLE cards (
-                uuid TEXT, name TEXT, manaCost TEXT, manaValue REAL, type TEXT, types TEXT,
-                subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
-                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT,
-                faceName TEXT, side TEXT
-            );
-            CREATE TABLE cardLegalities (uuid TEXT, commander TEXT);
-
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
-                text, colorIdentity, colors, keywords, power, toughness, loyalty)
-                VALUES ('goblin-commander', 'Goblin Warlord', '{2}{R}{R}', 4.0,
-                'Legendary Creature — Goblin Warrior', 'Creature', 'Goblin, Warrior',
-                'Legendary', 'text', 'R', 'R', NULL, '4', '4', NULL);
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
-                text, colorIdentity, colors, keywords, power, toughness, loyalty)
-                VALUES ('forest', 'Forest', NULL, 0.0, 'Basic Land — Forest', 'Land',
-                'Forest', 'Basic', 'text', NULL, NULL, NULL, NULL, NULL, NULL);
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
-                text, colorIdentity, colors, keywords, power, toughness, loyalty)
-                VALUES ('goblin-pool', 'Goblin Raider', '{1}{R}', 2.0, 'Creature',
-                'Creature', 'Goblin', NULL, '', 'R', 'R', NULL, '2', '2', NULL);
-
-            INSERT INTO cardLegalities VALUES ('goblin-commander', 'Legal');
-            INSERT INTO cardLegalities VALUES ('forest', 'Legal');
-            INSERT INTO cardLegalities VALUES ('goblin-pool', 'Legal');
-            "#,
-        )
-        .unwrap();
-
         // 7 Gobelins + le Commandant Gobelin : 8 si le Commandant était compté.
-        let mut deck_lines = String::new();
-        for i in 0..7 {
-            let uuid = format!("goblin-deck-{i}");
-            let name = format!("Goblin Grunt {i}");
-            conn.execute(
-                "INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, \
-                 supertypes, text, colorIdentity, colors, keywords, power, toughness, loyalty) \
-                 VALUES (?1, ?2, '{R}', 1.0, 'Creature', 'Creature', 'Goblin', \
-                 NULL, '', 'R', 'R', NULL, '1', '1', NULL)",
-                rusqlite::params![uuid, name],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO cardLegalities VALUES (?1, 'Legal')",
-                rusqlite::params![uuid],
-            )
-            .unwrap();
-            deck_lines.push_str(&format!("1 {name}\n"));
-        }
-
-        let db = CardsDb::open(&path).unwrap();
+        let (grunts, deck_lines) = goblin_grunts(7, "R");
+        let (_dir, db) = CardsFixture::new()
+            .cards([
+                goblin("goblin-commander", "Goblin Warlord", "R").supertypes("Legendary"),
+                forest(),
+                goblin("goblin-pool", "Goblin Raider", "R"),
+            ])
+            .cards(grunts)
+            .build();
         let input = format!("Commander\n1 Goblin Warlord\n\nDeck\n92 Forest\n{deck_lines}");
         let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
 

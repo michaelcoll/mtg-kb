@@ -7,7 +7,6 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 
 use super::resolve_and_filter;
-use crate::analyze::is_basic_land;
 use crate::analyze::ranking::sort_desc_by_score_then_name;
 use crate::db::cards::CardsDb;
 use crate::model::{AnalyzeResult, RecommanderRecommendation};
@@ -39,7 +38,7 @@ pub(super) fn request_body(analysis: &AnalyzeResult) -> serde_json::Value {
     let deck: Vec<String> = analysis
         .cards
         .iter()
-        .filter(|c| !is_basic_land(&c.card))
+        .filter(|c| !c.card.is_basic_land())
         .map(|c| c.card.name.clone())
         .collect();
     serde_json::json!({
@@ -107,100 +106,39 @@ pub fn fetch_and_filter(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::fixture::{CardsFixture, FixtureCard};
     use crate::model::*;
-    use rusqlite::Connection;
 
     fn fixture_db() -> (tempfile::TempDir, CardsDb) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("AllPrintings.sqlite");
-        let conn = Connection::open(&path).unwrap();
-        conn.execute_batch(
-            r#"
-            CREATE TABLE cards (
-                uuid TEXT, name TEXT, manaCost TEXT, manaValue REAL, type TEXT, types TEXT,
-                subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
-                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT,
-                faceName TEXT, side TEXT
-            );
-            CREATE TABLE cardLegalities (uuid TEXT, commander TEXT);
-
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
-                text, colorIdentity, colors, keywords, power, toughness, loyalty)
-                VALUES ('rampant', 'Rampant Growth', '{1}{G}', 2.0, 'Sorcery', 'Sorcery',
-                NULL, NULL, 'text', 'G', 'G', NULL, NULL, NULL, NULL);
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
-                text, colorIdentity, colors, keywords, power, toughness, loyalty)
-                VALUES ('bolt', 'Lightning Bolt', '{R}', 1.0, 'Instant', 'Instant',
-                NULL, NULL, 'text', 'R', 'R', NULL, NULL, NULL, NULL);
-
-            INSERT INTO cardLegalities VALUES ('rampant', 'Legal');
-            INSERT INTO cardLegalities VALUES ('bolt', 'Legal');
-            "#,
-        )
-        .unwrap();
-        (dir, CardsDb::open(&path).unwrap())
+        CardsFixture::new()
+            .cards([
+                FixtureCard::new("rampant", "Rampant Growth").identity("G"),
+                FixtureCard::new("bolt", "Lightning Bolt").identity("R"),
+            ])
+            .build()
     }
 
     fn sample_analysis() -> AnalyzeResult {
+        let forest = Card::from_face(Face {
+            name: "Forest".to_string(),
+            types: vec!["Land".to_string()],
+            supertypes: vec!["Basic".to_string()],
+            ..Face::default()
+        });
         AnalyzeResult {
-            commander: Card {
-                name: "Test Commander".to_string(),
-                mana_cost: None,
-                mana_value: None,
-                type_line: None,
-                types: vec![],
-                subtypes: vec![],
-                supertypes: vec![],
-                oracle_text: None,
-                color_identity: vec!["G".to_string()],
-                colors: vec![],
-                keywords: vec![],
-                power: None,
-                toughness: None,
-                loyalty: None,
-            },
+            commander: Card::named("Test Commander", &["G"]),
             cards: vec![
                 ResolvedCard {
                     quantity: 1,
                     roles: vec![],
                     themes: vec![],
-                    card: Card {
-                        name: "Forest".to_string(),
-                        mana_cost: None,
-                        mana_value: Some(0.0),
-                        type_line: None,
-                        types: vec!["Land".to_string()],
-                        subtypes: vec!["Forest".to_string()],
-                        supertypes: vec!["Basic".to_string()],
-                        oracle_text: None,
-                        color_identity: vec![],
-                        colors: vec![],
-                        keywords: vec![],
-                        power: None,
-                        toughness: None,
-                        loyalty: None,
-                    },
+                    card: forest,
                 },
                 ResolvedCard {
                     quantity: 1,
                     roles: vec![],
                     themes: vec![],
-                    card: Card {
-                        name: "Some Nonland Card".to_string(),
-                        mana_cost: None,
-                        mana_value: Some(2.0),
-                        type_line: None,
-                        types: vec!["Creature".to_string()],
-                        subtypes: vec![],
-                        supertypes: vec![],
-                        oracle_text: None,
-                        color_identity: vec!["G".to_string()],
-                        colors: vec![],
-                        keywords: vec![],
-                        power: None,
-                        toughness: None,
-                        loyalty: None,
-                    },
+                    card: Card::named("Some Nonland Card", &["G"]),
                 },
             ],
             unresolved: vec![],

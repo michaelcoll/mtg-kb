@@ -21,7 +21,7 @@ pub fn validate_suggestions(enriched: &EnrichedAnalysis, cards_db: &CardsDb) -> 
     for suggestion in &enriched.suggestions {
         let name = suggestion.card_name.as_str();
 
-        let card = match cards_db.card_by_name(name) {
+        let card = match cards_db.card(name) {
             Ok(Some(card)) => card,
             Ok(None) => {
                 push(&mut violations, name, "Carte inconnue.");
@@ -37,14 +37,8 @@ pub fn validate_suggestions(enriched: &EnrichedAnalysis, cards_db: &CardsDb) -> 
             }
         };
 
-        match cards_db.is_legal_commander(name) {
-            Ok(Some(true)) => {}
-            Ok(_) => push(&mut violations, name, "Carte non légale en Commander."),
-            Err(e) => push(
-                &mut violations,
-                name,
-                &format!("erreur lors de la vérification de légalité ({e})."),
-            ),
+        if !card.legal_in_commander {
+            push(&mut violations, name, "Carte non légale en Commander.");
         }
 
         if !card
@@ -59,7 +53,7 @@ pub fn validate_suggestions(enriched: &EnrichedAnalysis, cards_db: &CardsDb) -> 
             );
         }
 
-        if deck_card_names.contains(name) {
+        if deck_card_names.contains(card.name.as_str()) {
             push(&mut violations, name, "Carte déjà présente dans le Deck.");
         }
 
@@ -80,113 +74,33 @@ pub fn validate_suggestions(enriched: &EnrichedAnalysis, cards_db: &CardsDb) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::fixture::{CardsFixture, FixtureCard};
     use crate::model::*;
     use std::collections::BTreeMap;
 
     fn fixture_db() -> (tempfile::TempDir, CardsDb) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("AllPrintings.sqlite");
-        let conn = rusqlite::Connection::open(&path).unwrap();
-        conn.execute_batch(
-            r#"
-            CREATE TABLE cards (
-                uuid TEXT, name TEXT, manaCost TEXT, manaValue REAL, type TEXT, types TEXT,
-                subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
-                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT,
-                setCode TEXT, faceName TEXT, side TEXT
-            );
-            CREATE TABLE cardLegalities (uuid TEXT, commander TEXT, standard TEXT);
-
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes,
-                supertypes, text, colorIdentity, colors, keywords, power, toughness, loyalty,
-                setCode) VALUES (
-                'llanowar', 'Llanowar Elves', '{G}', 1.0, 'Creature — Elf Druid', 'Creature',
-                'Elf, Druid', NULL, '{T}: Add {G}.', 'G', 'G', NULL, '1', '1', NULL, 'M19'
-            );
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes,
-                supertypes, text, colorIdentity, colors, keywords, power, toughness, loyalty,
-                setCode) VALUES (
-                'rampant-growth', 'Rampant Growth', '{1}{G}', 2.0, 'Sorcery', 'Sorcery',
-                NULL, NULL, 'Search your library for a basic land card.', 'G', 'G', NULL,
-                NULL, NULL, NULL, 'M19'
-            );
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes,
-                supertypes, text, colorIdentity, colors, keywords, power, toughness, loyalty,
-                setCode) VALUES (
-                'lightning-bolt', 'Lightning Bolt', '{R}', 1.0, 'Instant', 'Instant',
-                NULL, NULL, 'Lightning Bolt deals 3 damage to any target.', 'R', 'R', NULL,
-                NULL, NULL, NULL, '2ED'
-            );
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes,
-                supertypes, text, colorIdentity, colors, keywords, power, toughness, loyalty,
-                setCode) VALUES (
-                'channel', 'Channel', '{G}', 1.0, 'Sorcery', 'Sorcery',
-                NULL, NULL, 'Banned in Commander.', 'G', 'G', NULL, NULL, NULL, NULL, '2ED'
-            );
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes,
-                supertypes, text, colorIdentity, colors, keywords, power, toughness, loyalty,
-                setCode) VALUES (
-                'atraxa', 'Atraxa, Praetors'' Voice', '{G}{W}{U}{B}', 4.0,
-                'Legendary Creature — Phyrexian Angel Horror', 'Creature',
-                'Phyrexian, Angel, Horror', 'Legendary', 'Flying, vigilance...',
-                'B, G, U, W', 'W, U, B, G', NULL, '4', '4', NULL, 'M15'
-            );
-
-            INSERT INTO cardLegalities VALUES ('llanowar', 'Legal', 'Legal');
-            INSERT INTO cardLegalities VALUES ('rampant-growth', 'Legal', 'Legal');
-            INSERT INTO cardLegalities VALUES ('lightning-bolt', 'Legal', 'Legal');
-            INSERT INTO cardLegalities VALUES ('channel', 'Banned', 'Legal');
-            INSERT INTO cardLegalities VALUES ('atraxa', 'Legal', '');
-            "#,
-        )
-        .unwrap();
-        (dir, CardsDb::open(&path).unwrap())
+        CardsFixture::new()
+            .cards([
+                FixtureCard::new("llanowar", "Llanowar Elves").identity("G"),
+                FixtureCard::new("rampant-growth", "Rampant Growth").identity("G"),
+                FixtureCard::new("lightning-bolt", "Lightning Bolt").identity("R"),
+                FixtureCard::new("channel", "Channel")
+                    .identity("G")
+                    .banned(),
+                FixtureCard::new("atraxa", "Atraxa, Praetors' Voice").identity("B, G, U, W"),
+            ])
+            .build()
     }
 
     fn sample(suggestions: Vec<Suggestion>) -> EnrichedAnalysis {
         EnrichedAnalysis {
             analysis: AnalyzeResult {
-                commander: Card {
-                    name: "Atraxa, Praetors' Voice".to_string(),
-                    mana_cost: Some("{G}{W}{U}{B}".to_string()),
-                    mana_value: Some(4.0),
-                    type_line: None,
-                    types: vec!["Creature".to_string()],
-                    subtypes: vec![],
-                    supertypes: vec![],
-                    oracle_text: None,
-                    color_identity: vec![
-                        "B".to_string(),
-                        "G".to_string(),
-                        "U".to_string(),
-                        "W".to_string(),
-                    ],
-                    colors: vec![],
-                    keywords: vec![],
-                    power: None,
-                    toughness: None,
-                    loyalty: None,
-                },
+                commander: Card::named("Atraxa, Praetors' Voice", &["B", "G", "U", "W"]),
                 cards: vec![ResolvedCard {
                     quantity: 1,
                     roles: vec![],
                     themes: vec![],
-                    card: Card {
-                        name: "Llanowar Elves".to_string(),
-                        mana_cost: Some("{G}".to_string()),
-                        mana_value: Some(1.0),
-                        type_line: None,
-                        types: vec![],
-                        subtypes: vec![],
-                        supertypes: vec![],
-                        oracle_text: None,
-                        color_identity: vec!["G".to_string()],
-                        colors: vec![],
-                        keywords: vec![],
-                        power: None,
-                        toughness: None,
-                        loyalty: None,
-                    },
+                    card: Card::named("Llanowar Elves", &["G"]),
                 }],
                 unresolved: vec![],
                 card_count: 100,

@@ -2,8 +2,62 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Card {
+/// Layout MTGJSON d'une Carte. Seuls les layouts qui changent la
+/// modélisation sont distingués ; les autres sont regroupés dans `Other`.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Layout {
+    #[default]
+    Normal,
+    Transform,
+    ModalDfc,
+    Split,
+    Adventure,
+    Aftermath,
+    Flip,
+    Meld,
+    #[serde(other)]
+    Other,
+}
+
+impl Layout {
+    pub fn from_mtgjson(layout: Option<&str>) -> Self {
+        match layout {
+            None | Some("normal") => Self::Normal,
+            Some("transform") => Self::Transform,
+            Some("modal_dfc") => Self::ModalDfc,
+            Some("split") => Self::Split,
+            Some("adventure") => Self::Adventure,
+            Some("aftermath") => Self::Aftermath,
+            Some("flip") => Self::Flip,
+            Some("meld") => Self::Meld,
+            Some(_) => Self::Other,
+        }
+    }
+
+    /// Layouts où `name` combine deux Faces d'une même Carte (ADR 0004) ;
+    /// `meld` en est exclu : deux Cartes physiques distinctes.
+    pub fn is_multi_face(self) -> bool {
+        matches!(
+            self,
+            Self::Transform
+                | Self::ModalDfc
+                | Self::Split
+                | Self::Adventure
+                | Self::Aftermath
+                | Self::Flip
+        )
+    }
+
+    /// Carte physique recto verso : l'image de la Face arrière est distincte.
+    pub fn has_back_image(self) -> bool {
+        matches!(self, Self::Transform | Self::ModalDfc)
+    }
+}
+
+/// Une moitié jouable d'une Carte ; une Carte normale n'a qu'une Face.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Face {
     pub name: String,
     pub mana_cost: Option<String>,
     pub mana_value: Option<f64>,
@@ -12,12 +66,163 @@ pub struct Card {
     pub subtypes: Vec<String>,
     pub supertypes: Vec<String>,
     pub oracle_text: Option<String>,
-    pub color_identity: Vec<String>,
     pub colors: Vec<String>,
     pub keywords: Vec<String>,
     pub power: Option<String>,
     pub toughness: Option<String>,
     pub loyalty: Option<String>,
+}
+
+impl Face {
+    pub fn is_land(&self) -> bool {
+        self.types.iter().any(|t| t == "Land")
+    }
+}
+
+/// Une Carte et ses Faces (ADR 0004). `mana_value` est celle de la Carte
+/// (celle qui compte hors de la pile), `front.mana_value` celle de la Face.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(from = "CardJson", into = "CardJson")]
+pub struct Card {
+    pub name: String,
+    pub mana_value: Option<f64>,
+    /// Déjà l'union des Faces dans MTGJSON.
+    pub color_identity: Vec<String>,
+    pub layout: Layout,
+    /// Au moins une Impression légale en Commander.
+    pub legal_in_commander: bool,
+    pub front: Face,
+    pub back: Option<Face>,
+}
+
+impl Card {
+    pub fn faces(&self) -> impl Iterator<Item = &Face> {
+        std::iter::once(&self.front).chain(self.back.as_ref())
+    }
+
+    /// Terrain dès qu'une Face l'est (Carte modale sort // terrain).
+    pub fn is_land(&self) -> bool {
+        self.faces().any(Face::is_land)
+    }
+
+    pub fn is_basic_land(&self) -> bool {
+        self.front.supertypes.iter().any(|t| t == "Basic") && self.front.is_land()
+    }
+
+    /// Carte de test à une Face, légale, dans l'Identité de couleur donnée.
+    #[cfg(test)]
+    pub fn named(name: &str, color_identity: &[&str]) -> Self {
+        Self {
+            color_identity: color_identity.iter().map(|c| c.to_string()).collect(),
+            ..Self::from_face(Face {
+                name: name.to_string(),
+                ..Face::default()
+            })
+        }
+    }
+
+    #[cfg(test)]
+    pub fn from_face(front: Face) -> Self {
+        Self {
+            name: front.name.clone(),
+            mana_value: front.mana_value,
+            legal_in_commander: true,
+            front,
+            ..Self::default()
+        }
+    }
+}
+
+/// Forme JSON d'une Carte (contrat avec Claude, ADR 0001) : les champs de
+/// premier niveau restent ceux de la Face principale, `faces` n'apparaît que
+/// pour une Carte multi-face.
+#[derive(Serialize, Deserialize)]
+struct CardJson {
+    name: String,
+    mana_cost: Option<String>,
+    mana_value: Option<f64>,
+    type_line: Option<String>,
+    types: Vec<String>,
+    subtypes: Vec<String>,
+    supertypes: Vec<String>,
+    oracle_text: Option<String>,
+    color_identity: Vec<String>,
+    colors: Vec<String>,
+    keywords: Vec<String>,
+    power: Option<String>,
+    toughness: Option<String>,
+    loyalty: Option<String>,
+    #[serde(default)]
+    layout: Layout,
+    #[serde(default)]
+    legal_in_commander: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    faces: Vec<Face>,
+}
+
+impl From<Card> for CardJson {
+    fn from(card: Card) -> Self {
+        let faces = match &card.back {
+            Some(back) => vec![card.front.clone(), back.clone()],
+            None => Vec::new(),
+        };
+        let front = card.front;
+        Self {
+            name: card.name,
+            mana_cost: front.mana_cost,
+            mana_value: card.mana_value,
+            type_line: front.type_line,
+            types: front.types,
+            subtypes: front.subtypes,
+            supertypes: front.supertypes,
+            oracle_text: front.oracle_text,
+            color_identity: card.color_identity,
+            colors: front.colors,
+            keywords: front.keywords,
+            power: front.power,
+            toughness: front.toughness,
+            loyalty: front.loyalty,
+            layout: card.layout,
+            legal_in_commander: card.legal_in_commander,
+            faces,
+        }
+    }
+}
+
+impl From<CardJson> for Card {
+    fn from(json: CardJson) -> Self {
+        let mut faces = json.faces.into_iter();
+        let (front, back) = match (faces.next(), faces.next()) {
+            (Some(front), back) => (front, back),
+            (None, _) => (
+                Face {
+                    name: json.name.clone(),
+                    mana_cost: json.mana_cost,
+                    mana_value: json.mana_value,
+                    type_line: json.type_line,
+                    types: json.types,
+                    subtypes: json.subtypes,
+                    supertypes: json.supertypes,
+                    oracle_text: json.oracle_text,
+                    colors: json.colors,
+                    keywords: json.keywords,
+                    power: json.power,
+                    toughness: json.toughness,
+                    loyalty: json.loyalty,
+                },
+                None,
+            ),
+        };
+        Self {
+            name: json.name,
+            mana_value: json.mana_value,
+            color_identity: json.color_identity,
+            layout: json.layout,
+            legal_in_commander: json.legal_in_commander,
+            front,
+            back,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -215,6 +420,60 @@ mod tests {
             "role_counts": {}, "weaknesses": [], "synergies": [], "candidates": [],
             "verdict": verdict,
         })
+    }
+
+    fn face(name: &str, types: &[&str]) -> Face {
+        Face {
+            name: name.to_string(),
+            types: types.iter().map(|t| t.to_string()).collect(),
+            ..Face::default()
+        }
+    }
+
+    fn bala_ged() -> Card {
+        Card {
+            name: "Bala Ged Recovery // Bala Ged Sanctuary".to_string(),
+            mana_value: Some(3.0),
+            layout: Layout::ModalDfc,
+            legal_in_commander: true,
+            front: face("Bala Ged Recovery", &["Sorcery"]),
+            back: Some(face("Bala Ged Sanctuary", &["Land"])),
+            ..Card::default()
+        }
+    }
+
+    #[test]
+    fn single_face_card_json_keeps_flat_fields_without_faces() {
+        let card = Card::from_face(face("Sol Ring", &["Artifact"]));
+        let json = serde_json::to_value(&card).unwrap();
+        assert_eq!(json["types"], serde_json::json!(["Artifact"]));
+        assert!(json.get("faces").is_none());
+    }
+
+    #[test]
+    fn multi_face_card_json_exposes_both_faces_with_front_as_flat_fields() {
+        let json = serde_json::to_value(bala_ged()).unwrap();
+        assert_eq!(json["types"], serde_json::json!(["Sorcery"]));
+        assert_eq!(json["layout"], "modal_dfc");
+        assert_eq!(json["faces"][1]["name"], "Bala Ged Sanctuary");
+    }
+
+    #[test]
+    fn card_json_round_trips() {
+        let card = bala_ged();
+        let json = serde_json::to_string(&card).unwrap();
+        assert_eq!(serde_json::from_str::<Card>(&json).unwrap(), card);
+    }
+
+    #[test]
+    fn unknown_layout_deserializes_as_other() {
+        let layout: Layout = serde_json::from_str("\"saga\"").unwrap();
+        assert_eq!(layout, Layout::Other);
+    }
+
+    #[test]
+    fn a_card_is_a_land_when_any_face_is() {
+        assert!(bala_ged().is_land());
     }
 
     #[test]

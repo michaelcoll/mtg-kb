@@ -2,11 +2,18 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use crate::model::Card;
+use crate::model::{Card, Face};
+
+use super::metrics::union_over_faces;
 
 /// Thèmes détectés par motifs sur le texte oracle et les sous-types de
 /// Créature. Tout sous-type de Créature devient un Thème "tribal:<sous-type>".
+/// Union des Thèmes des Faces (ADR 0004).
 pub fn detect_themes(card: &Card) -> Vec<String> {
+    union_over_faces(card, detect_face_themes)
+}
+
+fn detect_face_themes(face: &Face) -> Vec<String> {
     static TOKENS: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?i)creates? .*tokens?").unwrap());
     static PLUS_ONE_COUNTERS: LazyLock<Regex> =
@@ -16,7 +23,7 @@ pub fn detect_themes(card: &Card) -> Vec<String> {
     });
 
     let mut themes = Vec::new();
-    let text = card.oracle_text.as_deref().unwrap_or("");
+    let text = face.oracle_text.as_deref().unwrap_or("");
 
     if TOKENS.is_match(text) {
         themes.push("tokens".to_string());
@@ -27,8 +34,8 @@ pub fn detect_themes(card: &Card) -> Vec<String> {
     if ARISTOCRATS.is_match(text) {
         themes.push("aristocrats".to_string());
     }
-    if card.types.iter().any(|t| t == "Creature") {
-        for subtype in &card.subtypes {
+    if face.types.iter().any(|t| t == "Creature") {
+        for subtype in &face.subtypes {
             themes.push(format!("tribal:{subtype}"));
         }
     }
@@ -39,23 +46,35 @@ pub fn detect_themes(card: &Card) -> Vec<String> {
 mod tests {
     use super::*;
 
-    fn card(name: &str, oracle_text: &str, types: &[&str], subtypes: &[&str]) -> Card {
-        Card {
+    fn face(name: &str, oracle_text: &str, types: &[&str], subtypes: &[&str]) -> Face {
+        Face {
             name: name.to_string(),
-            mana_cost: None,
-            mana_value: None,
-            type_line: None,
             types: types.iter().map(|t| t.to_string()).collect(),
             subtypes: subtypes.iter().map(|t| t.to_string()).collect(),
-            supertypes: vec![],
             oracle_text: Some(oracle_text.to_string()),
-            color_identity: vec![],
-            colors: vec![],
-            keywords: vec![],
-            power: None,
-            toughness: None,
-            loyalty: None,
+            ..Face::default()
         }
+    }
+
+    fn card(name: &str, oracle_text: &str, types: &[&str], subtypes: &[&str]) -> Card {
+        Card::from_face(face(name, oracle_text, types, subtypes))
+    }
+
+    #[test]
+    fn a_multi_face_card_has_the_union_of_its_faces_themes() {
+        let c = Card {
+            back: Some(face(
+                "Fungus Frolic",
+                "Create two 1/1 Squirrel tokens.",
+                &["Instant"],
+                &[],
+            )),
+            ..card("Brightcap Badger", "", &["Creature"], &["Badger"])
+        };
+        assert_eq!(
+            detect_themes(&c),
+            vec!["tribal:Badger".to_string(), "tokens".to_string()]
+        );
     }
 
     #[test]

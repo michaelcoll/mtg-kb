@@ -52,22 +52,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn card(name: &str) -> Card {
-        Card {
-            name: name.to_string(),
-            mana_cost: None,
-            mana_value: None,
-            type_line: None,
-            types: vec![],
-            subtypes: vec![],
-            supertypes: vec![],
-            oracle_text: None,
-            color_identity: vec![],
-            colors: vec![],
-            keywords: vec![],
-            power: None,
-            toughness: None,
-            loyalty: None,
-        }
+        Card::named(name, &[])
     }
 
     fn sample(suggestions: Vec<Suggestion>) -> EnrichedAnalysis {

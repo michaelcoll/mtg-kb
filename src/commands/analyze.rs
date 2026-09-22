@@ -96,43 +96,24 @@ fn merge_external_sources(result: &mut AnalyzeResult, outcome: ExternalSourcesRe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::Connection;
+    use crate::db::fixture::{CardsFixture, FixtureCard};
 
     fn fixture_db() -> (tempfile::TempDir, CardsDb) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("AllPrintings.sqlite");
-        let conn = Connection::open(&path).unwrap();
-        conn.execute_batch(
-            r#"
-            CREATE TABLE cards (
-                uuid TEXT, name TEXT, manaCost TEXT, manaValue REAL, type TEXT, types TEXT,
-                subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
-                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT,
-                faceName TEXT, side TEXT
-            );
-            CREATE TABLE cardLegalities (uuid TEXT, commander TEXT);
-
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
-                text, colorIdentity, colors, keywords, power, toughness, loyalty)
-                VALUES ('atraxa', 'Atraxa, Praetors'' Voice', '{G}{W}{U}{B}', 4.0,
-                'Legendary Creature', 'Creature', NULL, 'Legendary', 'text', 'B, G, U, W',
-                'W, U, B, G', NULL, '4', '4', NULL);
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
-                text, colorIdentity, colors, keywords, power, toughness, loyalty)
-                VALUES ('forest', 'Forest', NULL, 0.0, 'Basic Land — Forest', 'Land',
-                'Forest', 'Basic', 'text', NULL, NULL, NULL, NULL, NULL, NULL);
-            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
-                text, colorIdentity, colors, keywords, power, toughness, loyalty)
-                VALUES ('rampant', 'Rampant Growth', '{1}{G}', 2.0, 'Sorcery', 'Sorcery',
-                NULL, NULL, 'text', 'G', 'G', NULL, NULL, NULL, NULL);
-
-            INSERT INTO cardLegalities VALUES ('atraxa', 'Legal');
-            INSERT INTO cardLegalities VALUES ('forest', 'Legal');
-            INSERT INTO cardLegalities VALUES ('rampant', 'Legal');
-            "#,
-        )
-        .unwrap();
-        (dir, CardsDb::open(&path).unwrap())
+        CardsFixture::new()
+            .cards([
+                FixtureCard::new("atraxa", "Atraxa, Praetors' Voice")
+                    .types("Creature")
+                    .supertypes("Legendary")
+                    .identity("B, G, U, W"),
+                FixtureCard::new("forest", "Forest")
+                    .types("Land")
+                    .supertypes("Basic"),
+                FixtureCard::new("rampant", "Rampant Growth")
+                    .mana("{1}{G}", 2.0)
+                    .types("Sorcery")
+                    .identity("G"),
+            ])
+            .build()
     }
 
     fn deck_input() -> String {

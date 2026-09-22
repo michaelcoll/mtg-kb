@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, Row};
 
-use crate::model::{Card, ReferencePrinting, Ruling, SetInfo, split_csv_field};
+use crate::model::{Card, Face, Layout, ReferencePrinting, Ruling, SetInfo, split_csv_field};
 
 /// Whitelist : le nom de colonne est injecté tel quel dans le SQL.
 const LEGALITY_FORMATS: &[&str] = &[
@@ -48,26 +48,93 @@ pub struct SearchFilters {
     pub limit: usize,
 }
 
-const CARD_COLUMNS: &str = "name, manaCost, manaValue, type, types, subtypes, supertypes, \
-             text, colorIdentity, colors, keywords, power, toughness, loyalty";
+/// Seule définition de la légalité d'une Impression (`c`) dans un format.
+fn printing_legal_in(column: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM cardLegalities cl WHERE cl.uuid = c.uuid AND cl.{column} = 'Legal')"
+    )
+}
 
-fn card_from_row(row: &Row) -> rusqlite::Result<Card> {
-    Ok(Card {
-        name: row.get(0)?,
-        mana_cost: row.get(1)?,
-        mana_value: row.get(2)?,
-        type_line: row.get(3)?,
-        types: split_csv_field(row.get::<_, Option<String>>(4)?.as_deref()),
-        subtypes: split_csv_field(row.get::<_, Option<String>>(5)?.as_deref()),
-        supertypes: split_csv_field(row.get::<_, Option<String>>(6)?.as_deref()),
-        oracle_text: row.get(7)?,
-        color_identity: split_csv_field(row.get::<_, Option<String>>(8)?.as_deref()),
-        colors: split_csv_field(row.get::<_, Option<String>>(9)?.as_deref()),
-        keywords: split_csv_field(row.get::<_, Option<String>>(10)?.as_deref()),
-        power: row.get(11)?,
-        toughness: row.get(12)?,
-        loyalty: row.get(13)?,
+/// Une ligne par Face et par Impression ; `rows_to_cards` les regroupe.
+fn card_columns() -> String {
+    format!(
+        "c.name, c.side, c.layout, c.faceName, c.manaCost, c.manaValue, c.faceManaValue, \
+         c.type, c.types, c.subtypes, c.supertypes, c.text, c.colorIdentity, c.colors, \
+         c.keywords, c.power, c.toughness, c.loyalty, {} AS legal",
+        printing_legal_in("commander")
+    )
+}
+
+struct CardRow {
+    name: String,
+    side: Option<String>,
+    layout: Layout,
+    mana_value: Option<f64>,
+    color_identity: Vec<String>,
+    legal_in_commander: bool,
+    face: Face,
+}
+
+fn card_row(row: &Row) -> rusqlite::Result<CardRow> {
+    let csv = |i: usize| -> rusqlite::Result<Vec<String>> {
+        Ok(split_csv_field(row.get::<_, Option<String>>(i)?.as_deref()))
+    };
+    let name: String = row.get(0)?;
+    let mana_value: Option<f64> = row.get(5)?;
+    let face_name: Option<String> = row.get(3)?;
+    let face_mana_value: Option<f64> = row.get(6)?;
+    Ok(CardRow {
+        side: row.get(1)?,
+        layout: Layout::from_mtgjson(row.get::<_, Option<String>>(2)?.as_deref()),
+        mana_value,
+        color_identity: csv(12)?,
+        legal_in_commander: row.get(18)?,
+        face: Face {
+            name: face_name.unwrap_or_else(|| name.clone()),
+            mana_cost: row.get(4)?,
+            mana_value: face_mana_value.or(mana_value),
+            type_line: row.get(7)?,
+            types: csv(8)?,
+            subtypes: csv(9)?,
+            supertypes: csv(10)?,
+            oracle_text: row.get(11)?,
+            colors: csv(13)?,
+            keywords: csv(14)?,
+            power: row.get(15)?,
+            toughness: row.get(16)?,
+            loyalty: row.get(17)?,
+        },
+        name,
     })
+}
+
+/// `rows` doit être trié par nom puis par `side` : les lignes d'une même
+/// Carte (Faces × Impressions) sont consécutives, la Face principale d'abord.
+fn rows_to_cards(rows: impl IntoIterator<Item = CardRow>) -> Vec<Card> {
+    let mut cards: Vec<Card> = Vec::new();
+    for row in rows {
+        match cards.last_mut() {
+            Some(card) if card.name == row.name => {
+                card.legal_in_commander |= row.legal_in_commander;
+                if card.back.is_none()
+                    && card.layout.is_multi_face()
+                    && row.side.as_deref() == Some("b")
+                {
+                    card.back = Some(row.face);
+                }
+            }
+            _ => cards.push(Card {
+                name: row.name,
+                mana_value: row.mana_value,
+                color_identity: row.color_identity,
+                layout: row.layout,
+                legal_in_commander: row.legal_in_commander,
+                front: row.face,
+                back: None,
+            }),
+        }
+    }
+    cards
 }
 
 #[derive(Debug)]
@@ -88,47 +155,36 @@ impl CardsDb {
         Ok(Self { conn })
     }
 
-    pub fn card_by_name(&self, name: &str) -> Result<Option<Card>> {
-        let Some(resolved) = self.resolve_name(name)? else {
+    /// Par nom complet (`A // B` pour une Carte multi-face) ou par nom de la
+    /// Face principale seule.
+    pub fn card(&self, name: &str) -> Result<Option<Card>> {
+        let Some(name) = self.canonical_name(name)? else {
             return Ok(None);
         };
-        let sql = format!("SELECT {CARD_COLUMNS} FROM cards WHERE name = ?1 ORDER BY side LIMIT 1");
+        let sql = format!(
+            "SELECT {} FROM cards c WHERE c.name = ?1 ORDER BY c.side, c.uuid",
+            card_columns()
+        );
         let mut stmt = self.conn.prepare(&sql)?;
-        let mut rows = stmt.query([resolved])?;
-        match rows.next()? {
-            Some(row) => Ok(Some(card_from_row(row)?)),
-            None => Ok(None),
-        }
+        let rows = stmt
+            .query_map([name], card_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows_to_cards(rows).into_iter().next())
     }
 
-    /// Résout un nom de Carte vers son nom complet (`name`) tel qu'exposé par
-    /// MTGJSON : `A // B` pour les Cartes multi-Faces (transform, modal_dfc,
-    /// split, adventure, aftermath, flip).
-    ///
-    /// `name` peut être :
-    /// - le nom complet exact (`A // B`) ;
-    /// - le nom d'une Carte simple Face ;
-    /// - le nom de la Face principale (`faceName`, `side = 'a'`) d'une Carte
-    ///   multi-Face : une ligne de Decklist ne référence jamais une Carte par
-    ///   le nom de sa Face secondaire.
-    fn resolve_name(&self, name: &str) -> Result<Option<String>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT name FROM cards \
-             WHERE name = ?1 OR (faceName = ?1 AND side = 'a') \
-             ORDER BY name = ?1 DESC LIMIT 1",
-        )?;
-        let mut rows = stmt.query([name])?;
-        match rows.next()? {
-            Some(row) => Ok(Some(row.get(0)?)),
-            None => Ok(None),
-        }
+    /// Cartes légales en Commander dans l'Identité de couleur donnée.
+    pub fn commander_pool(&self, color_identity: &[String]) -> Result<Vec<Card>> {
+        self.search(&SearchFilters {
+            legal_in_format: Some("commander".to_string()),
+            color_identity_subset_of: Some(color_identity.to_vec()),
+            limit: 0,
+            ..Default::default()
+        })
     }
 
-    /// Dédoublonné par nom ; le filtre d'Identité de couleur est appliqué
-    /// en Rust, après le SQL.
+    /// Une Carte correspond dès qu'une de ses lignes (Face ou Impression)
+    /// correspond ; le filtre d'Identité de couleur est appliqué en Rust.
     pub fn search(&self, filters: &SearchFilters) -> Result<Vec<Card>> {
-        let mut sql = format!("SELECT DISTINCT {CARD_COLUMNS} FROM cards c");
-        let mut joins = String::new();
         let mut conditions: Vec<String> = Vec::new();
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
@@ -143,8 +199,7 @@ impl CardsDb {
                         LEGALITY_FORMATS.join(", ")
                     )
                 })?;
-            joins.push_str(" JOIN cardLegalities cl ON cl.uuid = c.uuid");
-            conditions.push(format!("cl.{column} = 'Legal'"));
+            conditions.push(printing_legal_in(column));
         }
         if let Some(name) = &filters.name {
             conditions.push("c.name LIKE ?".to_string());
@@ -175,44 +230,61 @@ impl CardsDb {
             params.push(Box::new(max));
         }
 
-        sql.push_str(&joins);
+        let mut names_sql = "SELECT DISTINCT c.name FROM cards c".to_string();
         if !conditions.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&conditions.join(" AND "));
+            names_sql.push_str(" WHERE ");
+            names_sql.push_str(&conditions.join(" AND "));
         }
-        sql.push_str(" ORDER BY c.name");
+        names_sql.push_str(" ORDER BY c.name");
         // Sur-échantillonne : le filtre d'Identité de couleur vient après.
         if filters.limit > 0 {
             let fetch_cap = filters.limit.saturating_mul(20).max(500);
-            sql.push_str(&format!(" LIMIT {fetch_cap}"));
+            names_sql.push_str(&format!(" LIMIT {fetch_cap}"));
         }
+        let sql = format!(
+            "SELECT DISTINCT {} FROM cards c WHERE c.name IN ({names_sql}) \
+             ORDER BY c.name, c.side, c.uuid",
+            card_columns()
+        );
 
         let mut stmt = self.conn.prepare(&sql)?;
         let param_refs: Vec<&dyn rusqlite::types::ToSql> =
             params.iter().map(|p| p.as_ref()).collect();
-        let rows = stmt.query_map(param_refs.as_slice(), card_from_row)?;
+        let rows = stmt
+            .query_map(param_refs.as_slice(), card_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
 
-        let mut seen = std::collections::HashSet::new();
-        let mut results = Vec::new();
-        for row in rows {
-            let card = row?;
-            if !seen.insert(card.name.clone()) {
-                continue;
-            }
-            if let Some(allowed) = &filters.color_identity_subset_of
-                && !card
-                    .color_identity
-                    .iter()
-                    .all(|c| allowed.iter().any(|a| a.eq_ignore_ascii_case(c)))
-            {
-                continue;
-            }
-            results.push(card);
-            if filters.limit > 0 && results.len() >= filters.limit {
-                break;
-            }
+        let mut results: Vec<Card> = rows_to_cards(rows)
+            .into_iter()
+            .filter(|card| {
+                filters
+                    .color_identity_subset_of
+                    .as_ref()
+                    .is_none_or(|allowed| {
+                        card.color_identity
+                            .iter()
+                            .all(|c| allowed.iter().any(|a| a.eq_ignore_ascii_case(c)))
+                    })
+            })
+            .collect();
+        if filters.limit > 0 {
+            results.truncate(filters.limit);
         }
         Ok(results)
+    }
+
+    /// Nom complet de la Carte désignée par `name` : son nom complet, ou le
+    /// nom de sa Face principale.
+    fn canonical_name(&self, name: &str) -> Result<Option<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name FROM cards WHERE name = ?1 OR (faceName = ?1 AND side = 'a') \
+             ORDER BY name = ?1 DESC LIMIT 1",
+        )?;
+        let mut rows = stmt.query([name])?;
+        Ok(match rows.next()? {
+            Some(row) => Some(row.get(0)?),
+            None => None,
+        })
     }
 
     pub fn set_by_code(&self, code: &str) -> Result<Option<SetInfo>> {
@@ -236,13 +308,13 @@ impl CardsDb {
     }
 
     pub fn rulings_by_name(&self, name: &str) -> Result<Option<Vec<Ruling>>> {
-        let Some(resolved) = self.resolve_name(name)? else {
+        let Some(name) = self.canonical_name(name)? else {
             return Ok(None);
         };
         let mut uuid_stmt = self
             .conn
             .prepare("SELECT uuid FROM cards WHERE name = ?1 ORDER BY side LIMIT 1")?;
-        let mut uuid_rows = uuid_stmt.query([resolved])?;
+        let mut uuid_rows = uuid_stmt.query([name])?;
         let Some(row) = uuid_rows.next()? else {
             return Ok(None);
         };
@@ -263,31 +335,12 @@ impl CardsDb {
         Ok(Some(rulings))
     }
 
-    /// `None` si la Carte n'existe pas. Légale dès qu'au moins une Impression
-    /// l'est (certaines promos ont `commander` à NULL).
-    pub fn is_legal_commander(&self, name: &str) -> Result<Option<bool>> {
-        let Some(resolved) = self.resolve_name(name)? else {
-            return Ok(None);
-        };
-
-        let mut stmt = self.conn.prepare(
-            "SELECT EXISTS( \
-                 SELECT 1 FROM cards c \
-                 JOIN cardLegalities cl ON cl.uuid = c.uuid \
-                 WHERE c.name = ?1 AND cl.commander = 'Legal' \
-             )",
-        )?;
-        let legal: bool = stmt.query_row([resolved], |row| row.get(0))?;
-        Ok(Some(legal))
-    }
-
     /// La plus récente en papier, hors promo/surdimensionnée/fantaisie ; ces
     /// filtres sont relâchés successivement à défaut.
     pub fn reference_printing(&self, name: &str) -> Result<Option<ReferencePrinting>> {
-        let Some(resolved) = self.resolve_name(name)? else {
+        let Some(name) = self.canonical_name(name)? else {
             return Ok(None);
         };
-
         const TIERS: &[&str] = &[
             "AND (c.isPromo = 0 OR c.isPromo IS NULL) \
              AND (c.isOversized = 0 OR c.isOversized IS NULL) \
@@ -306,14 +359,14 @@ impl CardsDb {
                  ORDER BY s.releaseDate DESC, c.side LIMIT 1"
             );
             let mut stmt = self.conn.prepare(&sql)?;
-            let mut rows = stmt.query([&resolved])?;
+            let mut rows = stmt.query([&name])?;
             if let Some(row) = rows.next()? {
                 let layout: Option<String> = row.get(3)?;
                 return Ok(Some(ReferencePrinting {
                     set_code: row.get(0)?,
                     number: row.get(1)?,
                     scryfall_id: row.get(2)?,
-                    is_two_faced: matches!(layout.as_deref(), Some("transform" | "modal_dfc")),
+                    is_two_faced: Layout::from_mtgjson(layout.as_deref()).has_back_image(),
                 }));
             }
         }
@@ -324,88 +377,69 @@ impl CardsDb {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::fixture::{CardsFixture, FixtureCard};
 
-    fn fixture_db() -> (tempfile::TempDir, std::path::PathBuf) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("AllPrintings.sqlite");
-        let conn = Connection::open(&path).unwrap();
-        conn.execute_batch(
-            r#"
-            CREATE TABLE cards (
-                uuid TEXT, name TEXT, manaCost TEXT, manaValue REAL, type TEXT, types TEXT,
-                subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
-                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT,
-                setCode TEXT, number TEXT, availability TEXT,
-                isPromo BOOLEAN, isOversized BOOLEAN, isFunny BOOLEAN, layout TEXT,
-                faceName TEXT, side TEXT
-            );
-            CREATE TABLE cardLegalities (uuid TEXT, commander TEXT, standard TEXT);
-            CREATE TABLE cardRulings (uuid TEXT, date TEXT, text TEXT);
-            CREATE TABLE cardIdentifiers (uuid TEXT, scryfallId TEXT);
-            CREATE TABLE sets (
-                code TEXT, name TEXT, releaseDate TEXT, type TEXT, block TEXT,
-                baseSetSize INTEGER, totalSetSize INTEGER
-            );
-
-            INSERT INTO cards VALUES (
-                'sol-lea', 'Sol Ring', '{1}', 1.0, 'Artifact', 'Artifact', NULL, NULL,
-                '{T}: Add {C}{C}.', NULL, NULL, NULL, NULL, NULL, NULL, 'LEA',
-                '1', 'paper', 0, 0, 0, 'normal', 'Sol Ring', 'a'
-            );
-            INSERT INTO cards VALUES (
-                'sol-c21', 'Sol Ring', '{1}', 1.0, 'Artifact', 'Artifact', NULL, NULL,
-                '{T}: Add {C}{C}.', NULL, NULL, NULL, NULL, NULL, NULL, 'C21',
-                '263', 'paper', 0, 0, 0, 'normal', 'Sol Ring', 'a'
-            );
-            INSERT INTO cards VALUES (
-                'atraxa', 'Atraxa, Praetors'' Voice', '{G}{W}{U}{B}', 4.0,
-                'Legendary Creature — Phyrexian Angel Horror', 'Creature',
-                'Phyrexian, Angel, Horror', 'Legendary', 'Flying, vigilance...',
-                'B, G, U, W', 'W, U, B, G', 'Deathtouch, Flying, Lifelink, Vigilance, Proliferate',
-                '4', '4', NULL, 'M15', '1', 'paper', 0, 0, 0, 'normal',
-                'Atraxa, Praetors'' Voice', 'a'
-            );
-            INSERT INTO cards VALUES (
-                'llanowar', 'Llanowar Elves', '{G}', 1.0, 'Creature — Elf Druid', 'Creature',
-                'Elf, Druid', NULL, '{T}: Add {G}.', 'G', 'G', NULL, '1', '1', NULL, 'M19',
-                '183', 'paper', 0, 0, 0, 'normal', 'Llanowar Elves', 'a'
-            );
-            INSERT INTO cards VALUES (
-                'promo-only', 'Command Tower', NULL, 0.0, 'Land', 'Land', NULL, NULL,
-                'Add one mana of any color in your Commander''s color identity.',
-                NULL, NULL, NULL, NULL, NULL, NULL, 'PPRO', '1', 'paper', 1, 0, 0, 'normal',
-                'Command Tower', 'a'
-            );
-            INSERT INTO cards VALUES (
-                'no-scryfall', 'Obscure Test Card', NULL, 0.0, 'Land', 'Land', NULL, NULL,
-                NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'NST', '1', 'paper', 0, 0, 0, 'normal',
-                'Obscure Test Card', 'a'
-            );
-            INSERT INTO cards VALUES (
-                'oversized-only', 'Oversized Test Card', NULL, 0.0, 'Land', 'Land', NULL, NULL,
-                NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'OSIZ', '1', 'paper', 0, 1, 0, 'normal',
-                'Oversized Test Card', 'a'
-            );
-            INSERT INTO cards VALUES (
-                'sylvan-5ed', 'Sylvan Library', '{G}', 1.0, 'Enchantment', 'Enchantment', NULL,
-                NULL, 'At the beginning of your draw step, draw two additional cards.',
-                'G', 'G', NULL, NULL, NULL, NULL, '5ED', '1', 'paper', 0, 0, 0, 'normal',
-                'Sylvan Library', 'a'
-            );
-            INSERT INTO cards VALUES (
-                'sylvan-ptc', 'Sylvan Library', '{G}', 1.0, 'Enchantment', 'Enchantment', NULL,
-                NULL, 'At the beginning of your draw step, draw two additional cards.',
-                'G', 'G', NULL, NULL, NULL, NULL, 'PTC', '1', 'paper', 1, 0, 0, 'normal',
-                'Sylvan Library', 'a'
-            );
-
-            INSERT INTO cardLegalities VALUES ('sol-lea', 'Legal', 'Legal');
-            INSERT INTO cardLegalities VALUES ('sol-c21', 'Legal', 'Legal');
-            INSERT INTO cardLegalities VALUES ('atraxa', 'Legal', '');
-            INSERT INTO cardLegalities VALUES ('llanowar', 'Legal', 'Legal');
-            INSERT INTO cardLegalities VALUES ('sylvan-5ed', 'Legal', '');
-            INSERT INTO cardLegalities VALUES ('sylvan-ptc', NULL, NULL);
-
+    fn base_fixture() -> CardsFixture {
+        let sylvan = |uuid| {
+            FixtureCard::new(uuid, "Sylvan Library")
+                .mana("{G}", 1.0)
+                .types("Enchantment")
+                .text("At the beginning of your draw step, draw two additional cards.")
+                .identity("G")
+        };
+        CardsFixture::new()
+            .cards([
+                FixtureCard::new("sol-lea", "Sol Ring")
+                    .mana("{1}", 1.0)
+                    .types("Artifact")
+                    .text("{T}: Add {C}{C}.")
+                    .printing("LEA", "1")
+                    .standard("Legal"),
+                FixtureCard::new("sol-c21", "Sol Ring")
+                    .mana("{1}", 1.0)
+                    .types("Artifact")
+                    .text("{T}: Add {C}{C}.")
+                    .printing("C21", "263")
+                    .standard("Legal"),
+                FixtureCard::new("atraxa", "Atraxa, Praetors' Voice")
+                    .mana("{G}{W}{U}{B}", 4.0)
+                    .type_line("Legendary Creature — Phyrexian Angel Horror")
+                    .types("Creature")
+                    .subtypes("Phyrexian, Angel, Horror")
+                    .supertypes("Legendary")
+                    .identity("B, G, U, W")
+                    .keywords("Deathtouch, Flying, Lifelink, Vigilance, Proliferate")
+                    .printing("M15", "1"),
+                FixtureCard::new("llanowar", "Llanowar Elves")
+                    .mana("{G}", 1.0)
+                    .types("Creature")
+                    .subtypes("Elf, Druid")
+                    .text("{T}: Add {G}.")
+                    .identity("G")
+                    .printing("M19", "183")
+                    .standard("Legal"),
+                FixtureCard::new("promo-only", "Command Tower")
+                    .types("Land")
+                    .printing("PPRO", "1")
+                    .promo()
+                    .commander(None),
+                FixtureCard::new("no-scryfall", "Obscure Test Card")
+                    .types("Land")
+                    .printing("NST", "1")
+                    .commander(None),
+                FixtureCard::new("oversized-only", "Oversized Test Card")
+                    .types("Land")
+                    .printing("OSIZ", "1")
+                    .oversized()
+                    .commander(None),
+                sylvan("sylvan-5ed").printing("5ED", "1"),
+                sylvan("sylvan-ptc")
+                    .printing("PTC", "1")
+                    .promo()
+                    .commander(None),
+            ])
+            .sql(
+                r#"
             INSERT INTO cardRulings VALUES ('atraxa', '2023-02-04', 'Proliferate ruling one.');
             INSERT INTO cardRulings VALUES ('atraxa', '2023-02-04', 'Proliferate ruling two.');
 
@@ -420,236 +454,222 @@ mod tests {
             INSERT INTO sets VALUES ('NST', 'No Scryfall Test', '2020-01-01', 'promo', NULL, NULL, NULL);
             INSERT INTO sets VALUES ('OSIZ', 'Oversized Test', '2020-01-01', 'promo', NULL, NULL, NULL);
             "#,
-        )
-        .unwrap();
-        (dir, path)
+            )
     }
 
-    fn fixture_db_with_multiface() -> (tempfile::TempDir, std::path::PathBuf) {
-        let (dir, path) = fixture_db();
-        let conn = Connection::open(&path).unwrap();
-        conn.execute_batch(
-            r#"
-            INSERT INTO cards VALUES (
-                'delver-transform-a', 'Delver of Secrets // Insectile Aberration', NULL, 1.0,
-                'Creature — Human Wizard', 'Creature', 'Human, Wizard', NULL,
-                'At the beginning of your upkeep, look at the top card of your library.',
-                'U', 'U', NULL, '1', '1', NULL, 'ISD', '51', 'paper', 0, 0, 0, 'transform',
-                'Delver of Secrets', 'a'
-            );
-            INSERT INTO cards VALUES (
-                'delver-transform-b', 'Delver of Secrets // Insectile Aberration', NULL, 1.0,
-                'Creature — Human Insect', 'Creature', 'Human, Insect', NULL,
-                'Flying.',
-                'U', 'U', NULL, '3', '2', NULL, 'ISD', '51', 'paper', 0, 0, 0, 'transform',
-                'Insectile Aberration', 'b'
-            );
-            INSERT INTO cards VALUES (
-                'valki-mdfc-a', 'Valki, God of Lies // Tibalt, Cosmic Impostor', NULL, 2.0,
-                'Legendary Creature — God', 'Creature', 'God', 'Legendary',
-                'If a permanent entering the battlefield causes a triggered ability...',
-                'B, R', 'B', NULL, '3', '3', NULL, 'KHM', '91', 'paper', 0, 0, 0, 'modal_dfc',
-                'Valki, God of Lies', 'a'
-            );
-            INSERT INTO cards VALUES (
-                'valki-mdfc-b', 'Valki, God of Lies // Tibalt, Cosmic Impostor', NULL, 6.0,
-                'Legendary Planeswalker — Tibalt', 'Planeswalker', NULL, 'Legendary',
-                'Each opponent may discard a card...',
-                'B, R', 'B, R', NULL, NULL, NULL, '5', 'KHM', '91', 'paper', 0, 0, 0, 'modal_dfc',
-                'Tibalt, Cosmic Impostor', 'b'
-            );
-            INSERT INTO cards VALUES (
-                'fire-split-a', 'Fire // Ice', NULL, 1.0, 'Instant', 'Instant', NULL, NULL,
-                'Fire deals 2 damage divided as you choose among one or two targets.',
-                'R', 'R', NULL, NULL, NULL, NULL, 'GPT', '119', 'paper', 0, 0, 0, 'split',
-                'Fire', 'a'
-            );
-            INSERT INTO cards VALUES (
-                'fire-split-b', 'Fire // Ice', NULL, 1.0, 'Instant', 'Instant', NULL, NULL,
-                'Tap target land. It doesn''t untap during its controller''s next untap step.',
-                'U', 'U', NULL, NULL, NULL, NULL, 'GPT', '119', 'paper', 0, 0, 0, 'split',
-                'Ice', 'b'
-            );
+    fn fixture_db() -> (tempfile::TempDir, CardsDb) {
+        base_fixture().build()
+    }
 
-            INSERT INTO cards VALUES (
-                'brightcap-adventure-a', 'Brightcap Badger // Fungus Frolic', '{1}{G}', 2.0,
-                'Creature — Badger', 'Creature', 'Badger', NULL,
-                'Whenever this creature enters, you gain 1 life for each creature you control.',
-                'G', 'G', NULL, '2', '2', NULL, 'MID', '164', 'paper', 0, 0, 0, 'adventure',
-                'Brightcap Badger', 'a'
-            );
-            INSERT INTO cards VALUES (
-                'brightcap-adventure-b', 'Brightcap Badger // Fungus Frolic', '{G}', 1.0,
-                'Sorcery — Adventure', 'Sorcery', NULL, NULL,
-                'Create a 1/1 green Saproling creature token.',
-                'G', 'G', NULL, NULL, NULL, NULL, 'MID', '164', 'paper', 0, 0, 0, 'adventure',
-                'Fungus Frolic', 'b'
-            );
+    /// Deux Faces (`a` puis `b`) d'une Carte multi-face, dans l'ordre inverse
+    /// d'insertion pour vérifier que l'assemblage ne dépend pas de l'ordre
+    /// SQLite.
+    fn two_faces(
+        uuid: &str,
+        name: &str,
+        layout: &str,
+        front: (&str, &str),
+        back: (&str, &str),
+    ) -> [FixtureCard; 2] {
+        let (front_name, front_types) = front;
+        let (back_name, back_types) = back;
+        [
+            FixtureCard::new(&format!("{uuid}-b"), name)
+                .face(layout, "b", back_name, 0.0)
+                .mana_value(3.0)
+                .type_line(back_types)
+                .types(back_types),
+            FixtureCard::new(&format!("{uuid}-a"), name)
+                .face(layout, "a", front_name, 3.0)
+                .mana_value(3.0)
+                .type_line(front_types)
+                .types(front_types),
+        ]
+    }
 
-            INSERT INTO cardIdentifiers VALUES ('delver-transform-a', 'scryfall-delver');
-            INSERT INTO cardIdentifiers VALUES ('delver-transform-b', 'scryfall-delver');
-            INSERT INTO cardIdentifiers VALUES ('valki-mdfc-a', 'scryfall-valki');
-            INSERT INTO cardIdentifiers VALUES ('valki-mdfc-b', 'scryfall-valki');
-            INSERT INTO cardIdentifiers VALUES ('fire-split-a', 'scryfall-fire-ice');
-            INSERT INTO cardIdentifiers VALUES ('fire-split-b', 'scryfall-fire-ice');
-            INSERT INTO cards VALUES (
-                'balaged-mdfc-a', 'Bala Ged Recovery // Bala Ged Sanctuary', '{2}{G}', 3.0,
-                'Sorcery', 'Sorcery', NULL, NULL,
-                'Return target card from your graveyard to your hand.',
-                'G', 'G', NULL, NULL, NULL, NULL, 'ZNR', '180', 'paper', 0, 0, 0, 'modal_dfc',
-                'Bala Ged Recovery', 'a'
-            );
-            INSERT INTO cards VALUES (
-                'balaged-mdfc-b', 'Bala Ged Recovery // Bala Ged Sanctuary', '', 3.0,
-                'Land', 'Land', NULL, NULL, 'Bala Ged Sanctuary enters tapped.',
-                'G', NULL, NULL, NULL, NULL, NULL, 'ZNR', '180', 'paper', 0, 0, 0, 'modal_dfc',
-                'Bala Ged Sanctuary', 'b'
-            );
-            INSERT INTO cardLegalities VALUES ('balaged-mdfc-a', 'Legal', 'Legal');
-            INSERT INTO cardLegalities VALUES ('balaged-mdfc-b', 'Legal', 'Legal');
-
-            INSERT INTO cardIdentifiers VALUES ('brightcap-adventure-a', 'scryfall-brightcap');
-            INSERT INTO cardIdentifiers VALUES ('brightcap-adventure-b', 'scryfall-brightcap');
-
-            INSERT INTO sets VALUES ('ISD', 'Innistrad', '2011-09-30', 'expansion', NULL, 264, 264);
-            INSERT INTO sets VALUES ('KHM', 'Kaldheim', '2021-02-05', 'expansion', NULL, 285, 285);
-            INSERT INTO sets VALUES ('GPT', 'Guildpact', '2006-05-01', 'expansion', NULL, 165, 165);
-            INSERT INTO sets VALUES ('MID', 'Innistrad: Midnight Hunt', '2021-09-24', 'expansion', NULL, 277, 277);
+    fn fixture_db_with_multiface() -> (tempfile::TempDir, CardsDb) {
+        base_fixture()
+            .cards(two_faces(
+                "delver",
+                "Delver of Secrets // Insectile Aberration",
+                "transform",
+                ("Delver of Secrets", "Creature"),
+                ("Insectile Aberration", "Creature"),
+            ))
+            .cards(two_faces(
+                "bala-ged",
+                "Bala Ged Recovery // Bala Ged Sanctuary",
+                "modal_dfc",
+                ("Bala Ged Recovery", "Sorcery"),
+                ("Bala Ged Sanctuary", "Land"),
+            ))
+            .cards(two_faces(
+                "fire-ice",
+                "Fire // Ice",
+                "split",
+                ("Fire", "Instant"),
+                ("Ice", "Instant"),
+            ))
+            .cards(two_faces(
+                "brightcap",
+                "Brightcap Badger // Fungus Frolic",
+                "adventure",
+                ("Brightcap Badger", "Creature"),
+                ("Fungus Frolic", "Instant"),
+            ))
+            .cards(two_faces(
+                "cut-ribbons",
+                "Cut // Ribbons",
+                "aftermath",
+                ("Cut", "Sorcery"),
+                ("Ribbons", "Sorcery"),
+            ))
+            .cards(two_faces(
+                "budoka",
+                "Budoka Gardener // Dokai, Weaver of Life",
+                "flip",
+                ("Budoka Gardener", "Creature"),
+                ("Dokai, Weaver of Life", "Creature"),
+            ))
+            .card(
+                FixtureCard::new("bruna", "Bruna, the Fading Light")
+                    .face("meld", "a", "Bruna, the Fading Light", 7.0)
+                    .types("Creature"),
+            )
+            .sql(
+                r#"
+            INSERT INTO cardIdentifiers VALUES ('delver-a', 'scryfall-delver');
+            INSERT INTO cardIdentifiers VALUES ('bala-ged-a', 'scryfall-bala-ged');
+            INSERT INTO cardIdentifiers VALUES ('fire-ice-a', 'scryfall-fire-ice');
+            UPDATE cards SET setCode = 'ISD', number = '51' WHERE uuid LIKE 'delver-%';
+            UPDATE cards SET setCode = 'ZNR', number = '180' WHERE uuid LIKE 'bala-ged-%';
+            UPDATE cards SET setCode = 'GPT', number = '119' WHERE uuid LIKE 'fire-ice-%';
             "#,
-        )
-        .unwrap();
-        (dir, path)
+            )
+            .build()
     }
 
     #[test]
     fn resolves_card_by_exact_name_deduped_across_printings() {
-        let (_dir, path) = fixture_db();
-        let db = CardsDb::open(&path).unwrap();
-        let card = db.card_by_name("Sol Ring").unwrap().expect("card found");
+        let (_dir, db) = fixture_db();
+        let card = db.card("Sol Ring").unwrap().expect("card found");
         assert_eq!(card.name, "Sol Ring");
         assert_eq!(card.mana_value, Some(1.0));
+        assert!(card.back.is_none());
     }
 
     #[test]
     fn splits_multi_valued_fields() {
-        let (_dir, path) = fixture_db();
-        let db = CardsDb::open(&path).unwrap();
+        let (_dir, db) = fixture_db();
         let card = db
-            .card_by_name("Atraxa, Praetors' Voice")
+            .card("Atraxa, Praetors' Voice")
             .unwrap()
             .expect("card found");
         assert_eq!(card.color_identity, vec!["B", "G", "U", "W"]);
-        assert_eq!(card.subtypes, vec!["Phyrexian", "Angel", "Horror"]);
-        assert_eq!(card.keywords.len(), 5);
+        assert_eq!(card.front.subtypes, vec!["Phyrexian", "Angel", "Horror"]);
+        assert_eq!(card.front.keywords.len(), 5);
     }
 
     #[test]
     fn unknown_card_returns_none() {
-        let (_dir, path) = fixture_db();
-        let db = CardsDb::open(&path).unwrap();
-        assert!(db.card_by_name("Not A Real Card").unwrap().is_none());
+        let (_dir, db) = fixture_db();
+        assert!(db.card("Not A Real Card").unwrap().is_none());
     }
 
     #[test]
-    fn card_by_name_resolves_adventure_card_by_main_face_name() {
-        let (_dir, path) = fixture_db_with_multiface();
-        let db = CardsDb::open(&path).unwrap();
+    fn card_is_legal_in_commander_when_its_printing_is() {
+        let (_dir, db) = fixture_db();
+        let card = db.card("Atraxa, Praetors' Voice").unwrap().unwrap();
+        assert!(card.legal_in_commander);
+    }
+
+    #[test]
+    fn card_without_any_legal_printing_is_not_legal_in_commander() {
+        let (_dir, db) = fixture_db();
+        let card = db.card("Command Tower").unwrap().unwrap();
+        assert!(!card.legal_in_commander);
+    }
+
+    #[test]
+    fn a_promo_printing_with_null_legality_does_not_hide_a_legal_one() {
+        let (_dir, db) = fixture_db();
+        let card = db.card("Sylvan Library").unwrap().unwrap();
+        assert!(card.legal_in_commander);
+    }
+
+    #[test]
+    fn two_face_rows_make_one_card_with_front_then_back() {
+        let (_dir, db) = fixture_db_with_multiface();
         let card = db
-            .card_by_name("Brightcap Badger")
+            .card("Bala Ged Recovery // Bala Ged Sanctuary")
             .unwrap()
-            .expect("card found");
-        assert_eq!(card.name, "Brightcap Badger // Fungus Frolic");
+            .unwrap();
+        let faces: Vec<&str> = card.faces().map(|f| f.name.as_str()).collect();
+        assert_eq!(faces, vec!["Bala Ged Recovery", "Bala Ged Sanctuary"]);
     }
 
     #[test]
-    fn card_by_name_does_not_resolve_by_secondary_face_name() {
-        let (_dir, path) = fixture_db_with_multiface();
-        let db = CardsDb::open(&path).unwrap();
-        assert!(db.card_by_name("Fungus Frolic").unwrap().is_none());
+    fn a_multi_face_card_keeps_the_card_mana_value_and_each_face_its_own() {
+        let (_dir, db) = fixture_db_with_multiface();
+        let card = db.card("Bala Ged Recovery").unwrap().unwrap();
+        assert_eq!(card.mana_value, Some(3.0));
+        assert_eq!(card.back.unwrap().mana_value, Some(0.0));
     }
 
     #[test]
-    fn card_by_name_resolves_modal_dfc_by_main_face_name() {
-        let (_dir, path) = fixture_db_with_multiface();
-        let db = CardsDb::open(&path).unwrap();
-        let card = db
-            .card_by_name("Valki, God of Lies")
-            .unwrap()
-            .expect("card found");
-        assert_eq!(card.name, "Valki, God of Lies // Tibalt, Cosmic Impostor");
+    fn every_multi_face_layout_yields_two_faces() {
+        let (_dir, db) = fixture_db_with_multiface();
+        for (name, layout) in [
+            ("Delver of Secrets", Layout::Transform),
+            ("Bala Ged Recovery", Layout::ModalDfc),
+            ("Fire", Layout::Split),
+            ("Brightcap Badger", Layout::Adventure),
+            ("Cut", Layout::Aftermath),
+            ("Budoka Gardener", Layout::Flip),
+        ] {
+            let card = db.card(name).unwrap().expect(name);
+            assert_eq!(card.layout, layout, "{name}");
+            assert!(card.back.is_some(), "{name}");
+        }
     }
 
     #[test]
-    fn card_by_name_resolves_bala_ged_recovery_modal_dfc() {
-        let (_dir, path) = fixture_db_with_multiface();
-        let db = CardsDb::open(&path).unwrap();
-        let card = db
-            .card_by_name("Bala Ged Recovery")
-            .unwrap()
-            .expect("card found");
-        assert_eq!(card.name, "Bala Ged Recovery // Bala Ged Sanctuary");
-        assert_eq!(card.mana_cost.as_deref(), Some("{2}{G}"));
+    fn a_meld_card_has_a_single_face() {
+        let (_dir, db) = fixture_db_with_multiface();
+        let card = db.card("Bruna, the Fading Light").unwrap().unwrap();
+        assert_eq!(card.layout, Layout::Meld);
+        assert!(card.back.is_none());
     }
 
     #[test]
-    fn card_by_name_resolves_transform_and_split_by_main_face_name() {
-        let (_dir, path) = fixture_db_with_multiface();
-        let db = CardsDb::open(&path).unwrap();
-        let delver = db
-            .card_by_name("Delver of Secrets")
-            .unwrap()
-            .expect("found");
-        assert_eq!(delver.name, "Delver of Secrets // Insectile Aberration");
-        let fire = db.card_by_name("Fire").unwrap().expect("found");
-        assert_eq!(fire.name, "Fire // Ice");
-        assert!(db.card_by_name("Ice").unwrap().is_none());
+    fn the_secondary_face_name_alone_does_not_resolve() {
+        let (_dir, db) = fixture_db_with_multiface();
+        assert!(db.card("Fungus Frolic").unwrap().is_none());
     }
 
     #[test]
-    fn is_legal_commander_resolves_by_main_face_name() {
-        let (_dir, path) = fixture_db_with_multiface();
-        let db = CardsDb::open(&path).unwrap();
-        assert_eq!(
-            db.is_legal_commander("Bala Ged Recovery").unwrap(),
-            Some(true)
-        );
-        assert_eq!(db.is_legal_commander("Bala Ged Sanctuary").unwrap(), None);
+    fn search_assembles_multi_face_cards_matching_on_either_face() {
+        let (_dir, db) = fixture_db_with_multiface();
+        let results = db
+            .search(&SearchFilters {
+                type_contains: Some("Land".to_string()),
+                limit: 10,
+                ..Default::default()
+            })
+            .unwrap();
+        let bala_ged = results
+            .iter()
+            .find(|c| c.name == "Bala Ged Recovery // Bala Ged Sanctuary")
+            .expect("matched through its land face");
+        assert_eq!(bala_ged.front.name, "Bala Ged Recovery");
     }
 
     #[test]
-    fn card_by_name_with_full_name_returns_main_face_characteristics() {
-        let (_dir, path) = fixture_db_with_multiface();
-        let db = CardsDb::open(&path).unwrap();
-        let card = db
-            .card_by_name("Brightcap Badger // Fungus Frolic")
-            .unwrap()
-            .expect("card found");
-        assert_eq!(card.mana_cost.as_deref(), Some("{1}{G}"));
-        assert_eq!(card.mana_value, Some(2.0));
-    }
-
-    #[test]
-    fn is_legal_commander_true_for_legal_card() {
-        let (_dir, path) = fixture_db();
-        let db = CardsDb::open(&path).unwrap();
-        assert_eq!(
-            db.is_legal_commander("Atraxa, Praetors' Voice").unwrap(),
-            Some(true)
-        );
-    }
-
-    #[test]
-    fn is_legal_commander_none_for_unknown_card() {
-        let (_dir, path) = fixture_db();
-        let db = CardsDb::open(&path).unwrap();
-        assert_eq!(db.is_legal_commander("Nope").unwrap(), None);
-    }
-
-    #[test]
-    fn is_legal_commander_true_when_any_printing_is_legal() {
-        let (_dir, path) = fixture_db();
-        let db = CardsDb::open(&path).unwrap();
-        assert_eq!(db.is_legal_commander("Sylvan Library").unwrap(), Some(true));
+    fn commander_pool_keeps_legal_cards_within_the_identity() {
+        let (_dir, db) = fixture_db();
+        let pool = db.commander_pool(&["G".to_string()]).unwrap();
+        let names: Vec<_> = pool.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["Llanowar Elves", "Sol Ring", "Sylvan Library"]);
     }
 
     #[test]
@@ -662,8 +682,7 @@ mod tests {
 
     #[test]
     fn search_dedupes_printings_by_name() {
-        let (_dir, path) = fixture_db();
-        let db = CardsDb::open(&path).unwrap();
+        let (_dir, db) = fixture_db();
         let results = db
             .search(&SearchFilters {
                 name: Some("Sol Ring".to_string()),
@@ -676,8 +695,7 @@ mod tests {
 
     #[test]
     fn search_filters_by_partial_name() {
-        let (_dir, path) = fixture_db();
-        let db = CardsDb::open(&path).unwrap();
+        let (_dir, db) = fixture_db();
         let results = db
             .search(&SearchFilters {
                 name: Some("elve".to_string()),
@@ -691,8 +709,7 @@ mod tests {
 
     #[test]
     fn search_filters_by_subtype() {
-        let (_dir, path) = fixture_db();
-        let db = CardsDb::open(&path).unwrap();
+        let (_dir, db) = fixture_db();
         let results = db
             .search(&SearchFilters {
                 subtype_contains: Some("Elf".to_string()),
@@ -706,8 +723,7 @@ mod tests {
 
     #[test]
     fn search_filters_by_legality() {
-        let (_dir, path) = fixture_db();
-        let db = CardsDb::open(&path).unwrap();
+        let (_dir, db) = fixture_db();
         let results = db
             .search(&SearchFilters {
                 legal_in_format: Some("standard".to_string()),
@@ -723,8 +739,7 @@ mod tests {
 
     #[test]
     fn search_filters_by_mana_value_range() {
-        let (_dir, path) = fixture_db();
-        let db = CardsDb::open(&path).unwrap();
+        let (_dir, db) = fixture_db();
         let results = db
             .search(&SearchFilters {
                 mana_value_min: Some(2.0),
@@ -739,8 +754,7 @@ mod tests {
 
     #[test]
     fn search_with_repeated_text_combines_as_and() {
-        let (_dir, path) = fixture_db();
-        let db = CardsDb::open(&path).unwrap();
+        let (_dir, db) = fixture_db();
         // "Add" matche Sol Ring et Llanowar Elves, mais "{C}" ne matche que
         // Sol Ring : la combinaison en ET des deux doit isoler Sol Ring.
         let results = db
@@ -756,8 +770,7 @@ mod tests {
 
     #[test]
     fn search_with_zero_limit_returns_the_whole_matching_pool() {
-        let (_dir, path) = fixture_db();
-        let db = CardsDb::open(&path).unwrap();
+        let (_dir, db) = fixture_db();
         let results = db
             .search(&SearchFilters {
                 legal_in_format: Some("commander".to_string()),
@@ -778,8 +791,7 @@ mod tests {
 
     #[test]
     fn search_rejects_unknown_format() {
-        let (_dir, path) = fixture_db();
-        let db = CardsDb::open(&path).unwrap();
+        let (_dir, db) = fixture_db();
         let err = db
             .search(&SearchFilters {
                 legal_in_format: Some("not-a-format".to_string()),
@@ -792,8 +804,7 @@ mod tests {
 
     #[test]
     fn search_filters_by_color_identity_subset() {
-        let (_dir, path) = fixture_db();
-        let db = CardsDb::open(&path).unwrap();
+        let (_dir, db) = fixture_db();
         let results = db
             .search(&SearchFilters {
                 color_identity_subset_of: Some(vec!["G".to_string()]),
@@ -809,8 +820,7 @@ mod tests {
 
     #[test]
     fn set_by_code_returns_info() {
-        let (_dir, path) = fixture_db();
-        let db = CardsDb::open(&path).unwrap();
+        let (_dir, db) = fixture_db();
         let set = db.set_by_code("lea").unwrap().expect("set found");
         assert_eq!(set.code, "LEA");
         assert_eq!(set.name, "Limited Edition Alpha");
@@ -818,8 +828,7 @@ mod tests {
 
     #[test]
     fn rulings_by_name_orders_by_date() {
-        let (_dir, path) = fixture_db();
-        let db = CardsDb::open(&path).unwrap();
+        let (_dir, db) = fixture_db();
         let rulings = db
             .rulings_by_name("Atraxa, Praetors' Voice")
             .unwrap()
@@ -830,15 +839,13 @@ mod tests {
 
     #[test]
     fn rulings_by_name_none_for_unknown_card() {
-        let (_dir, path) = fixture_db();
-        let db = CardsDb::open(&path).unwrap();
+        let (_dir, db) = fixture_db();
         assert!(db.rulings_by_name("Nope").unwrap().is_none());
     }
 
     #[test]
     fn reference_printing_picks_the_most_recent_non_promo_paper_printing() {
-        let (_dir, path) = fixture_db();
-        let db = CardsDb::open(&path).unwrap();
+        let (_dir, db) = fixture_db();
         let printing = db
             .reference_printing("Sol Ring")
             .unwrap()
@@ -851,8 +858,7 @@ mod tests {
 
     #[test]
     fn reference_printing_flags_transform_layout_as_two_faced() {
-        let (_dir, path) = fixture_db_with_multiface();
-        let db = CardsDb::open(&path).unwrap();
+        let (_dir, db) = fixture_db_with_multiface();
         let printing = db
             .reference_printing("Delver of Secrets // Insectile Aberration")
             .unwrap()
@@ -862,10 +868,9 @@ mod tests {
 
     #[test]
     fn reference_printing_flags_modal_dfc_layout_as_two_faced() {
-        let (_dir, path) = fixture_db_with_multiface();
-        let db = CardsDb::open(&path).unwrap();
+        let (_dir, db) = fixture_db_with_multiface();
         let printing = db
-            .reference_printing("Valki, God of Lies // Tibalt, Cosmic Impostor")
+            .reference_printing("Bala Ged Recovery // Bala Ged Sanctuary")
             .unwrap()
             .expect("printing found");
         assert!(printing.is_two_faced);
@@ -873,8 +878,7 @@ mod tests {
 
     #[test]
     fn reference_printing_does_not_flag_split_layout_as_two_faced() {
-        let (_dir, path) = fixture_db_with_multiface();
-        let db = CardsDb::open(&path).unwrap();
+        let (_dir, db) = fixture_db_with_multiface();
         let printing = db
             .reference_printing("Fire // Ice")
             .unwrap()
@@ -884,8 +888,7 @@ mod tests {
 
     #[test]
     fn reference_printing_falls_back_to_promo_when_only_promo_exists() {
-        let (_dir, path) = fixture_db();
-        let db = CardsDb::open(&path).unwrap();
+        let (_dir, db) = fixture_db();
         let printing = db
             .reference_printing("Command Tower")
             .unwrap()
@@ -896,8 +899,7 @@ mod tests {
 
     #[test]
     fn reference_printing_falls_back_to_oversized_when_that_is_all_there_is() {
-        let (_dir, path) = fixture_db();
-        let db = CardsDb::open(&path).unwrap();
+        let (_dir, db) = fixture_db();
         let printing = db
             .reference_printing("Oversized Test Card")
             .unwrap()
@@ -908,8 +910,7 @@ mod tests {
 
     #[test]
     fn reference_printing_none_without_any_scryfall_id() {
-        let (_dir, path) = fixture_db();
-        let db = CardsDb::open(&path).unwrap();
+        let (_dir, db) = fixture_db();
         assert!(
             db.reference_printing("Obscure Test Card")
                 .unwrap()
@@ -919,8 +920,7 @@ mod tests {
 
     #[test]
     fn reference_printing_none_for_unknown_card() {
-        let (_dir, path) = fixture_db();
-        let db = CardsDb::open(&path).unwrap();
+        let (_dir, db) = fixture_db();
         assert!(db.reference_printing("Not A Real Card").unwrap().is_none());
     }
 }
