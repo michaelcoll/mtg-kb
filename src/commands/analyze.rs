@@ -107,16 +107,23 @@ mod tests {
             CREATE TABLE cards (
                 uuid TEXT, name TEXT, manaCost TEXT, manaValue REAL, type TEXT, types TEXT,
                 subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT,
-                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT
+                colors TEXT, keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT,
+                faceName TEXT, side TEXT
             );
             CREATE TABLE cardLegalities (uuid TEXT, commander TEXT);
 
-            INSERT INTO cards VALUES ('atraxa', 'Atraxa, Praetors'' Voice', '{G}{W}{U}{B}', 4.0,
+            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
+                text, colorIdentity, colors, keywords, power, toughness, loyalty)
+                VALUES ('atraxa', 'Atraxa, Praetors'' Voice', '{G}{W}{U}{B}', 4.0,
                 'Legendary Creature', 'Creature', NULL, 'Legendary', 'text', 'B, G, U, W',
                 'W, U, B, G', NULL, '4', '4', NULL);
-            INSERT INTO cards VALUES ('forest', 'Forest', NULL, 0.0, 'Basic Land — Forest', 'Land',
+            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
+                text, colorIdentity, colors, keywords, power, toughness, loyalty)
+                VALUES ('forest', 'Forest', NULL, 0.0, 'Basic Land — Forest', 'Land',
                 'Forest', 'Basic', 'text', NULL, NULL, NULL, NULL, NULL, NULL);
-            INSERT INTO cards VALUES ('rampant', 'Rampant Growth', '{1}{G}', 2.0, 'Sorcery', 'Sorcery',
+            INSERT INTO cards (uuid, name, manaCost, manaValue, type, types, subtypes, supertypes,
+                text, colorIdentity, colors, keywords, power, toughness, loyalty)
+                VALUES ('rampant', 'Rampant Growth', '{1}{G}', 2.0, 'Sorcery', 'Sorcery',
                 NULL, NULL, 'text', 'G', 'G', NULL, NULL, NULL, NULL);
 
             INSERT INTO cardLegalities VALUES ('atraxa', 'Legal');
