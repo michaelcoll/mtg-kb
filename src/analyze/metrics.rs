@@ -7,19 +7,8 @@ use crate::model::{Card, Face, ManaBase, ManaCurve, ManaCurveBucket, ResolvedCar
 
 const COLORS: [&str; 5] = ["W", "U", "B", "R", "G"];
 
-/// Union des Rôles des Faces (ADR 0004), dans l'ordre de première apparition.
 pub fn detect_roles(card: &Card) -> Vec<String> {
-    union_over_faces(card, detect_face_roles)
-}
-
-pub(crate) fn union_over_faces(card: &Card, detect: fn(&Face) -> Vec<String>) -> Vec<String> {
-    let mut union: Vec<String> = Vec::new();
-    for label in card.faces().flat_map(detect) {
-        if !union.contains(&label) {
-            union.push(label);
-        }
-    }
-    union
+    card.union_over_faces(detect_face_roles)
 }
 
 fn detect_face_roles(face: &Face) -> Vec<String> {
@@ -362,28 +351,26 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_spell_land_modal_card_counts_as_a_land_and_a_green_source() {
+    fn bala_ged_recovery_mana_base() -> ManaBase {
         let resolved = ResolvedCard {
             quantity: 1,
             roles: vec![],
             themes: vec![],
             card: bala_ged_recovery(),
         };
-        let base = mana_base(&[resolved], &card("Commander", "", &["Creature"], None));
+        mana_base(&[resolved], &card("Commander", "", &["Creature"], None))
+    }
+
+    #[test]
+    fn a_spell_land_modal_card_counts_as_a_land_and_a_green_source() {
+        let base = bala_ged_recovery_mana_base();
         assert_eq!(base.land_count, 1);
         assert_eq!(base.sources_by_color.get("G"), Some(&1));
     }
 
     #[test]
     fn a_spell_land_modal_card_counts_the_spell_face_symbols() {
-        let resolved = ResolvedCard {
-            quantity: 1,
-            roles: vec![],
-            themes: vec![],
-            card: bala_ged_recovery(),
-        };
-        let base = mana_base(&[resolved], &card("Commander", "", &["Creature"], None));
+        let base = bala_ged_recovery_mana_base();
         assert_eq!(base.symbols_by_color.get("G"), Some(&1));
     }
 

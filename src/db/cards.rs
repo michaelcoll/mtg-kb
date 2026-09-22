@@ -48,7 +48,6 @@ pub struct SearchFilters {
     pub limit: usize,
 }
 
-/// Seule définition de la légalité d'une Impression (`c`) dans un format.
 fn printing_legal_in(column: &str) -> String {
     format!(
         "EXISTS (SELECT 1 FROM cardLegalities cl WHERE cl.uuid = c.uuid AND cl.{column} = 'Legal')"
@@ -422,21 +421,21 @@ mod tests {
                     .types("Land")
                     .printing("PPRO", "1")
                     .promo()
-                    .commander(None),
+                    .without_commander_legality(),
                 FixtureCard::new("no-scryfall", "Obscure Test Card")
                     .types("Land")
                     .printing("NST", "1")
-                    .commander(None),
+                    .without_commander_legality(),
                 FixtureCard::new("oversized-only", "Oversized Test Card")
                     .types("Land")
                     .printing("OSIZ", "1")
                     .oversized()
-                    .commander(None),
+                    .without_commander_legality(),
                 sylvan("sylvan-5ed").printing("5ED", "1"),
                 sylvan("sylvan-ptc")
                     .printing("PTC", "1")
                     .promo()
-                    .commander(None),
+                    .without_commander_legality(),
             ])
             .sql(
                 r#"
@@ -532,9 +531,12 @@ mod tests {
                 ("Dokai, Weaver of Life", "Creature"),
             ))
             .card(
-                FixtureCard::new("bruna", "Bruna, the Fading Light")
-                    .face("meld", "a", "Bruna, the Fading Light", 7.0)
-                    .types("Creature"),
+                FixtureCard::new(
+                    "bruna",
+                    "Bruna, the Fading Light // Brisela, Voice of Nightmares",
+                )
+                .face("meld", "a", "Bruna, the Fading Light", 7.0)
+                .types("Creature"),
             )
             .sql(
                 r#"

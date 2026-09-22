@@ -4,13 +4,10 @@ use regex::Regex;
 
 use crate::model::{Card, Face};
 
-use super::metrics::union_over_faces;
-
 /// Thèmes détectés par motifs sur le texte oracle et les sous-types de
 /// Créature. Tout sous-type de Créature devient un Thème "tribal:<sous-type>".
-/// Union des Thèmes des Faces (ADR 0004).
 pub fn detect_themes(card: &Card) -> Vec<String> {
-    union_over_faces(card, detect_face_themes)
+    card.union_over_faces(detect_face_themes)
 }
 
 fn detect_face_themes(face: &Face) -> Vec<String> {
