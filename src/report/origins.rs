@@ -1,48 +1,52 @@
-use std::collections::HashSet;
+use crate::model::AnalyzeResult;
 
-use crate::model::EnrichedAnalysis;
+/// Provenance d'une Suggestion (CONTEXT.md) : Candidat de `kb`,
+/// Recommandation externe d'une Source, sinon investigation hors de ces listes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Origin {
+    Kb,
+    Edhrec,
+    Recommander,
+    Investigation,
+}
 
-/// Origines de chaque Suggestion (`kb`, `edhrec`, `recommander`, sinon
-/// `investigation`), alignées sur `enriched.suggestions`.
-pub fn compute_origins(enriched: &EnrichedAnalysis) -> Vec<Vec<String>> {
-    let analysis = &enriched.analysis;
-    let candidate_names: HashSet<&str> = analysis
-        .candidates
-        .iter()
-        .map(|c| c.card.name.as_str())
-        .collect();
-    let edhrec_names: HashSet<&str> = analysis
+impl Origin {
+    /// Libellé du badge dans le Rapport d'analyse.
+    pub fn label(self) -> &'static str {
+        match self {
+            Origin::Kb => "kb",
+            Origin::Edhrec => "edhrec",
+            Origin::Recommander => "recommander",
+            Origin::Investigation => "investigation",
+        }
+    }
+}
+
+/// Origines de la Suggestion `card_name`, dans l'ordre `kb`, `edhrec`,
+/// `recommander` ; `Investigation` seule si aucune liste ne la contient.
+pub fn origins_of(analysis: &AnalyzeResult, card_name: &str) -> Vec<Origin> {
+    let mut origins = Vec::new();
+    if analysis.candidates.iter().any(|c| c.card.name == card_name) {
+        origins.push(Origin::Kb);
+    }
+    if analysis
         .edhrec_recommendations
         .iter()
-        .map(|r| r.card.name.as_str())
-        .collect();
-    let recommander_names: HashSet<&str> = analysis
+        .any(|r| r.card.name == card_name)
+    {
+        origins.push(Origin::Edhrec);
+    }
+    if analysis
         .recommander_recommendations
         .iter()
-        .map(|r| r.card.name.as_str())
-        .collect();
-
-    enriched
-        .suggestions
-        .iter()
-        .map(|s| {
-            let name = s.card_name.as_str();
-            let mut origins = Vec::new();
-            if candidate_names.contains(name) {
-                origins.push("kb".to_string());
-            }
-            if edhrec_names.contains(name) {
-                origins.push("edhrec".to_string());
-            }
-            if recommander_names.contains(name) {
-                origins.push("recommander".to_string());
-            }
-            if origins.is_empty() {
-                origins.push("investigation".to_string());
-            }
-            origins
-        })
-        .collect()
+        .any(|r| r.card.name == card_name)
+    {
+        origins.push(Origin::Recommander);
+    }
+    if origins.is_empty() {
+        origins.push(Origin::Investigation);
+    }
+    origins
 }
 
 #[cfg(test)]
@@ -55,121 +59,85 @@ mod tests {
         Card::named(name, &[])
     }
 
-    fn sample(suggestions: Vec<Suggestion>) -> EnrichedAnalysis {
-        EnrichedAnalysis {
-            analysis: AnalyzeResult {
-                commander: card("Test Commander"),
-                cards: vec![],
-                unresolved: vec![],
-                card_count: 100,
-                construction_errors: vec![],
-                mana_curve: ManaCurve {
-                    buckets: vec![],
-                    average_mana_value: 0.0,
-                },
-                mana_base: ManaBase {
-                    land_count: 37,
-                    sources_by_color: BTreeMap::new(),
-                    symbols_by_color: BTreeMap::new(),
-                },
-                role_counts: BTreeMap::new(),
-                weaknesses: vec![],
-                synergies: vec![],
-                candidates: vec![Candidate {
-                    card: card("Rampant Growth"),
-                    score: 2,
-                    matched_themes: vec![],
-                    matched_weak_roles: vec!["ramp".to_string()],
-                }],
-                edhrec_recommendations: vec![EdhrecRecommendation {
-                    card: card("Sol Ring"),
-                    synergy: 0.1,
-                    inclusion_rate: 0.9,
-                    header: "High Synergy Cards".to_string(),
-                }],
-                edhrec_unresolved_names: vec![],
-                recommander_recommendations: vec![RecommanderRecommendation {
-                    card: card("Cultivate"),
-                    score: 3.0,
-                }],
-                recommander_unresolved_names: vec![],
-                source_errors: vec![],
+    fn sample() -> AnalyzeResult {
+        AnalyzeResult {
+            commander: card("Test Commander"),
+            cards: vec![],
+            unresolved: vec![],
+            card_count: 100,
+            construction_errors: vec![],
+            mana_curve: ManaCurve {
+                buckets: vec![],
+                average_mana_value: 0.0,
             },
-            verdict: Verdict {
-                summary: "Solide".to_string(),
-                strengths: vec![],
-                weaknesses: vec![],
-                priorities: vec![],
+            mana_base: ManaBase {
+                land_count: 37,
+                sources_by_color: BTreeMap::new(),
+                symbols_by_color: BTreeMap::new(),
             },
-            suggestions,
-        }
-    }
-
-    fn suggestion(name: &str) -> Suggestion {
-        Suggestion {
-            card_name: name.to_string(),
-            justification: "test".to_string(),
-            card_to_remove: None,
+            role_counts: BTreeMap::new(),
+            weaknesses: vec![],
+            synergies: vec![],
+            candidates: vec![Candidate {
+                card: card("Rampant Growth"),
+                score: 2,
+                matched_themes: vec![],
+                matched_weak_roles: vec!["ramp".to_string()],
+            }],
+            edhrec_recommendations: vec![EdhrecRecommendation {
+                card: card("Sol Ring"),
+                synergy: 0.1,
+                inclusion_rate: 0.9,
+                header: "High Synergy Cards".to_string(),
+            }],
+            edhrec_unresolved_names: vec![],
+            recommander_recommendations: vec![RecommanderRecommendation {
+                card: card("Cultivate"),
+                score: 3.0,
+            }],
+            recommander_unresolved_names: vec![],
+            source_errors: vec![],
         }
     }
 
     #[test]
     fn a_suggestion_from_candidates_has_origin_kb() {
-        let enriched = sample(vec![suggestion("Rampant Growth")]);
-        assert_eq!(compute_origins(&enriched), vec![vec!["kb".to_string()]]);
+        assert_eq!(origins_of(&sample(), "Rampant Growth"), vec![Origin::Kb]);
     }
 
     #[test]
     fn a_suggestion_from_edhrec_has_origin_edhrec() {
-        let enriched = sample(vec![suggestion("Sol Ring")]);
-        assert_eq!(compute_origins(&enriched), vec![vec!["edhrec".to_string()]]);
+        assert_eq!(origins_of(&sample(), "Sol Ring"), vec![Origin::Edhrec]);
     }
 
     #[test]
     fn a_suggestion_from_recommander_has_origin_recommander() {
-        let enriched = sample(vec![suggestion("Cultivate")]);
         assert_eq!(
-            compute_origins(&enriched),
-            vec![vec!["recommander".to_string()]]
+            origins_of(&sample(), "Cultivate"),
+            vec![Origin::Recommander]
         );
     }
 
     #[test]
     fn a_suggestion_absent_from_all_three_lists_has_origin_investigation() {
-        let enriched = sample(vec![suggestion("Beast Within")]);
         assert_eq!(
-            compute_origins(&enriched),
-            vec![vec!["investigation".to_string()]]
+            origins_of(&sample(), "Beast Within"),
+            vec![Origin::Investigation]
         );
     }
 
     #[test]
     fn a_suggestion_present_in_several_lists_has_several_origins() {
-        let mut enriched = sample(vec![suggestion("Rampant Growth")]);
-        enriched
-            .analysis
-            .edhrec_recommendations
-            .push(EdhrecRecommendation {
-                card: card("Rampant Growth"),
-                synergy: 0.2,
-                inclusion_rate: 0.5,
-                header: "Top Cards".to_string(),
-            });
+        let mut analysis = sample();
+        analysis.edhrec_recommendations.push(EdhrecRecommendation {
+            card: card("Rampant Growth"),
+            synergy: 0.2,
+            inclusion_rate: 0.5,
+            header: "Top Cards".to_string(),
+        });
         assert_eq!(
-            compute_origins(&enriched),
-            vec![vec!["kb".to_string(), "edhrec".to_string()]]
-        );
-    }
-
-    #[test]
-    fn origins_are_aligned_positionally_with_suggestions() {
-        let enriched = sample(vec![
-            suggestion("Rampant Growth"),
-            suggestion("Beast Within"),
-        ]);
-        assert_eq!(
-            compute_origins(&enriched),
-            vec![vec!["kb".to_string()], vec!["investigation".to_string()]]
+            origins_of(&analysis, "Rampant Growth"),
+            vec![Origin::Kb, Origin::Edhrec]
         );
     }
 }

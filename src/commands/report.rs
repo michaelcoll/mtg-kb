@@ -1,92 +1,25 @@
-use std::collections::HashSet;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 
 use crate::model::EnrichedAnalysis;
 use crate::report;
-use crate::report::{CardPrintings, SuggestionPrintings};
 
 const REPORTS_DIR: &str = "reports";
 
 pub fn run(json_path: &str) -> Result<()> {
     let content = std::fs::read_to_string(json_path)
         .with_context(|| format!("lecture du fichier {json_path}"))?;
-    let value: serde_json::Value = serde_json::from_str(&content)
-        .with_context(|| format!("« {json_path} » n'est pas un JSON valide"))?;
-    if value.get("verdict").is_some_and(|v| v.is_string()) {
-        bail!(
-            "« {json_path} » utilise l'ancien format de Verdict (texte libre), qui n'est plus \
-             accepté. Le Verdict doit être un objet {{summary, strengths, weaknesses, \
-             priorities}} — voir le skill mtg-deck-analyze."
-        );
-    }
-    let enriched: EnrichedAnalysis = serde_json::from_value(value)
+    let enriched: EnrichedAnalysis = serde_json::from_str(&content)
         .with_context(|| format!("« {json_path} » n'est pas un JSON d'analyse enrichi valide"))?;
 
     let cards_db = super::open_cards_db()?;
-    let violations = report::validate::validate_suggestions(&enriched, &cards_db);
-    if !violations.is_empty() {
-        let messages = violations.join("\n");
-        bail!("Suggestions invalides, aucun rapport écrit :\n{messages}");
-    }
-
-    let commander_printing = cards_db.reference_printing(&enriched.analysis.commander.name)?;
-    let origins = report::origins::compute_origins(&enriched);
-    let suggestion_printings = enriched
-        .suggestions
-        .iter()
-        .enumerate()
-        .map(|(i, s)| {
-            let printing = cards_db.reference_printing(&s.card_name)?;
-            let card_to_remove_printing = match &s.card_to_remove {
-                Some(name) => cards_db.reference_printing(name)?,
-                None => None,
-            };
-            Ok(SuggestionPrintings {
-                printing,
-                card_to_remove_printing,
-                origins: origins.get(i).cloned().unwrap_or_default(),
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
-
-    // Cartes citées par leur seul nom (Synergies, annexe).
-    let mut named_cards: HashSet<&str> = HashSet::new();
-    for synergy in &enriched.analysis.synergies {
-        named_cards.extend(synergy.cards.iter().map(String::as_str));
-    }
-    named_cards.extend(
-        enriched
-            .analysis
-            .edhrec_recommendations
-            .iter()
-            .map(|r| r.card.name.as_str()),
-    );
-    named_cards.extend(
-        enriched
-            .analysis
-            .recommander_recommendations
-            .iter()
-            .map(|r| r.card.name.as_str()),
-    );
-    let mut card_printings: CardPrintings = CardPrintings::new();
-    for name in named_cards {
-        if let Some(printing) = cards_db.reference_printing(name)? {
-            card_printings.insert(name.to_string(), printing);
-        }
-    }
-
-    let html = report::render(
-        &enriched,
-        commander_printing.as_ref(),
-        &suggestion_printings,
-        &card_printings,
-    );
+    let model = report::prepare(enriched, &cards_db)?;
+    let html = report::render(&model);
 
     let dir = PathBuf::from(REPORTS_DIR);
     std::fs::create_dir_all(&dir)?;
-    let slug = report::slugify(&enriched.analysis.commander.name);
+    let slug = report::slugify(&model.analysis.commander.name);
     let date = chrono::Local::now().format("%Y-%m-%d");
     let output_path = dir.join(format!("{slug}-{date}.html"));
 
