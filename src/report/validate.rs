@@ -1,17 +1,10 @@
 use crate::db::cards::CardsDb;
+use crate::deck_context::{DeckContext, Ineligible};
 use crate::model::EnrichedAnalysis;
 
-/// Un message par violation (existence, légalité Commander, Identité de
-/// couleur, absence du Deck).
+/// Un message par violation (existence, éligibilité, Carte à retirer).
 pub fn validate_suggestions(enriched: &EnrichedAnalysis, cards_db: &CardsDb) -> Vec<String> {
-    let analysis = &enriched.analysis;
-    let commander_identity = &analysis.commander.color_identity;
-    let deck_card_names: std::collections::HashSet<&str> = analysis
-        .cards
-        .iter()
-        .map(|c| c.card.name.as_str())
-        .chain(std::iter::once(analysis.commander.name.as_str()))
-        .collect();
+    let deck = DeckContext::from_analysis(&enriched.analysis);
 
     let mut violations = Vec::new();
     let push = |violations: &mut Vec<String>, name: &str, rule: &str| {
@@ -37,28 +30,17 @@ pub fn validate_suggestions(enriched: &EnrichedAnalysis, cards_db: &CardsDb) -> 
             }
         };
 
-        if !card.legal_in_commander {
-            push(&mut violations, name, "Carte non légale en Commander.");
-        }
-
-        if !card
-            .color_identity
-            .iter()
-            .all(|color| commander_identity.contains(color))
-        {
-            push(
-                &mut violations,
-                name,
-                "hors de l'Identité de couleur du Commandant.",
-            );
-        }
-
-        if deck_card_names.contains(card.name.as_str()) {
-            push(&mut violations, name, "Carte déjà présente dans le Deck.");
+        if let Err(ineligible) = deck.eligibility(&card) {
+            let rule = match ineligible {
+                Ineligible::Illegal => "Carte non légale en Commander.",
+                Ineligible::OutsideIdentity => "hors de l'Identité de couleur du Commandant.",
+                Ineligible::AlreadyInDeck => "Carte déjà présente dans le Deck.",
+            };
+            push(&mut violations, name, rule);
         }
 
         if let Some(card_to_remove) = &suggestion.card_to_remove
-            && !deck_card_names.contains(card_to_remove.as_str())
+            && !deck.contains(card_to_remove)
         {
             push(
                 &mut violations,
@@ -210,6 +192,18 @@ mod tests {
         assert_eq!(violations.len(), 1);
         assert!(violations[0].contains("Lightning Bolt"));
         assert!(violations[0].contains("Identité de couleur"));
+    }
+
+    #[test]
+    fn color_identity_comparison_ignores_case() {
+        let (_dir, db) = fixture_db();
+        let mut enriched = sample(vec![Suggestion {
+            card_name: "Rampant Growth".to_string(),
+            justification: "Ramp".to_string(),
+            card_to_remove: None,
+        }]);
+        enriched.analysis.commander = Card::named("Atraxa, Praetors' Voice", &["b", "g", "u", "w"]);
+        assert!(validate_suggestions(&enriched, &db).is_empty());
     }
 
     #[test]

@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use crate::analyze::metrics::detect_roles;
 use crate::analyze::themes::detect_themes;
 use crate::db::cards::{CardsDb, SearchFilters};
+use crate::deck_context::ColorIdentity;
 use crate::decklist::parser;
 use crate::model::Card;
 use crate::output::{Format, print_json};
@@ -80,8 +81,7 @@ fn search_cards(
         type_contains,
         subtype_contains,
         oracle_text_contains: text,
-        color_identity_subset_of: color_identity
-            .map(|s| s.chars().map(|c| c.to_string()).collect()),
+        color_identity_subset_of: color_identity.as_deref().map(ColorIdentity::from_letters),
         legal_in_format: legal_in,
         mana_value,
         mana_value_min,

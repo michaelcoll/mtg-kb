@@ -4,6 +4,7 @@ use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, Row};
 
 use crate::db::overrides::Corrections;
+use crate::deck_context::ColorIdentity;
 use crate::model::{
     Card, CardCorrections, Face, Layout, ReferencePrinting, Ruling, SetInfo, split_csv_field,
 };
@@ -42,7 +43,7 @@ pub struct SearchFilters {
     pub subtype_contains: Option<String>,
     /// Combinées en ET.
     pub oracle_text_contains: Vec<String>,
-    pub color_identity_subset_of: Option<Vec<String>>,
+    pub color_identity_subset_of: Option<ColorIdentity>,
     pub legal_in_format: Option<String>,
     pub mana_value: Option<f64>,
     pub mana_value_min: Option<f64>,
@@ -237,10 +238,10 @@ impl CardsDb {
     }
 
     /// Cartes légales en Commander dans l'Identité de couleur donnée.
-    pub fn commander_pool(&self, color_identity: &[String]) -> Result<Vec<Card>> {
+    pub fn commander_pool(&self, color_identity: &ColorIdentity) -> Result<Vec<Card>> {
         self.search(&SearchFilters {
             legal_in_format: Some("commander".to_string()),
-            color_identity_subset_of: Some(color_identity.to_vec()),
+            color_identity_subset_of: Some(color_identity.clone()),
             limit: 0,
             ..Default::default()
         })
@@ -330,9 +331,7 @@ impl CardsDb {
                     .color_identity_subset_of
                     .as_ref()
                     .is_none_or(|allowed| {
-                        card.color_identity
-                            .iter()
-                            .all(|c| allowed.iter().any(|a| a.eq_ignore_ascii_case(c)))
+                        ColorIdentity::new(&card.color_identity).is_subset_of(allowed)
                     })
             })
             .collect();
@@ -740,7 +739,9 @@ mod tests {
     #[test]
     fn commander_pool_keeps_legal_cards_within_the_identity() {
         let (_dir, db) = fixture_db();
-        let pool = db.commander_pool(&["G".to_string()]).unwrap();
+        let pool = db
+            .commander_pool(&ColorIdentity::from_letters("G"))
+            .unwrap();
         let names: Vec<_> = pool.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, vec!["Llanowar Elves", "Sol Ring", "Sylvan Library"]);
     }
@@ -801,7 +802,9 @@ mod tests {
         let db = db.with_corrections(legality("Sol Ring", false));
         assert!(!db.card("Sol Ring").unwrap().unwrap().legal_in_commander);
         assert!(!commander_legal_names(&db).contains(&"Sol Ring".to_string()));
-        let pool = db.commander_pool(&["G".to_string()]).unwrap();
+        let pool = db
+            .commander_pool(&ColorIdentity::from_letters("G"))
+            .unwrap();
         assert!(!pool.iter().any(|c| c.name == "Sol Ring"));
     }
 
@@ -816,7 +819,9 @@ mod tests {
                 .legal_in_commander
         );
         assert!(commander_legal_names(&db).contains(&"Command Tower".to_string()));
-        let pool = db.commander_pool(&["G".to_string()]).unwrap();
+        let pool = db
+            .commander_pool(&ColorIdentity::from_letters("G"))
+            .unwrap();
         assert!(pool.iter().any(|c| c.name == "Command Tower"));
     }
 
@@ -970,7 +975,7 @@ mod tests {
         let (_dir, db) = fixture_db();
         let results = db
             .search(&SearchFilters {
-                color_identity_subset_of: Some(vec!["G".to_string()]),
+                color_identity_subset_of: Some(ColorIdentity::from_letters("G")),
                 limit: 10,
                 ..Default::default()
             })

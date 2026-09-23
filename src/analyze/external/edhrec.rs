@@ -3,7 +3,6 @@
 //! Commandant seul.
 
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::path::Path;
 use std::time::Duration;
 
@@ -13,6 +12,7 @@ use serde::Deserialize;
 use super::{cache, resolve_and_filter};
 use crate::analyze::ranking::sort_desc_by_score_then_name;
 use crate::db::cards::CardsDb;
+use crate::deck_context::DeckContext;
 use crate::model::{AnalyzeResult, EdhrecRecommendation};
 
 pub trait EdhrecClient {
@@ -132,14 +132,13 @@ pub fn fetch_and_filter(
     ttl: Duration,
     analysis: &AnalyzeResult,
     db: &CardsDb,
-    deck_names: &HashSet<String>,
+    deck: &DeckContext,
 ) -> Result<(Vec<EdhrecRecommendation>, Vec<String>)> {
     let commander_slug = slug(&analysis.commander.name);
     let raw_json = cache::cached_fetch(client, cache_dir, &commander_slug, ttl)?;
     let items = parse(&raw_json)?;
 
-    let (resolved, unresolved_names) =
-        resolve_and_filter(items, db, &analysis.commander.color_identity, deck_names)?;
+    let (resolved, unresolved_names) = resolve_and_filter(items, db, deck)?;
 
     let recommendations = resolved
         .into_iter()
@@ -283,7 +282,7 @@ mod tests {
             Duration::from_secs(7 * 86400),
             &analysis,
             &db,
-            &HashSet::new(),
+            &DeckContext::from_analysis(&analysis),
         )
         .unwrap();
 
