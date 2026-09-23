@@ -1,75 +1,73 @@
 ---
 name: mtg-query
-description: Interroger la Base cartes (kb search, kb set, kb rulings, kb card) et la Base règles (kb rules) sans jamais écrire de SQL brut. Utiliser dès qu'une question porte sur des Cartes, Sets, Rulings ou les Comprehensive Rules — légalité, identité de couleur, type, texte oracle, numéro de Règle, terme de Glossaire.
+description: Query the card database (kb search, kb set, kb rulings, kb card) and the rules database (kb rules) without ever writing raw SQL. Use whenever a question is about Cards, Sets, Rulings or the Comprehensive Rules — legality, color identity, type, oracle text, Rule number, Glossary term.
 ---
 
 # mtg-query
 
-`kb` expose un accès typé à la Base cartes (`data/AllPrintings.sqlite`,
-lecture seule) et à la Base règles (`data/rules.sqlite`, lecture seule).
-N'interroge jamais ces fichiers SQLite directement : passe toujours par ces
-sous-commandes, qui dédoublonnent les Impressions par nom oracle et
-renvoient du JSON stable.
+`kb` gives typed access to the card database (`data/AllPrintings.sqlite`,
+read-only) and the rules database (`data/rules.sqlite`, read-only). Never
+query these SQLite files directly: always go through these subcommands,
+which deduplicate Printings by oracle name and return stable JSON.
 
-## Commandes
+## Commands
 
-- `kb card "<nom exact>"` — une Carte par nom oracle exact (cartes double
-  face : nom complet `A // B`).
-- `kb search [filtres] [--limit N]` — recherche combinée (tous les filtres
-  fournis se combinent en ET) :
-  - `--name <partiel>` : sous-chaîne du nom
-  - `--type <partiel>` : sous-chaîne de la ligne de type (ex. `Creature`, `Legendary`)
-  - `--subtype <partiel>` : sous-chaîne des sous-types (ex. `Elf`, `Equipment`)
-  - `--text <partiel>` : sous-chaîne du texte oracle, répétable (chaque
-    occurrence doit être présente : `--text "target creature" --text destroy`
-    ne retient que les Cartes qui contiennent les deux)
-  - `--color-identity <WUBRG>` : Identité de couleur de la Carte incluse dans
-    cet ensemble (ex. `--color-identity GW` pour un Commandant Selesnya)
-  - `--legal-in <format>` : légal dans ce format (`commander`, `standard`,
+- `kb card "<exact name>"` — one Card by exact oracle name, or by the name
+  of its front face for a multi-face Card (`A // B`).
+- `kb search [filters] [--limit N]` — combined search (all given filters
+  combine with AND):
+  - `--name <partial>`: substring of the name
+  - `--type <partial>`: substring of the type line (e.g. `Creature`, `Legendary`)
+  - `--subtype <partial>`: substring of the subtypes (e.g. `Elf`, `Equipment`)
+  - `--text <partial>`: substring of the oracle text, repeatable (every
+    occurrence must be present: `--text "target creature" --text destroy`
+    only keeps Cards containing both)
+  - `--color-identity <WUBRG>`: the Card's color identity is included in
+    this set (e.g. `--color-identity GW` for a Selesnya Commander)
+  - `--legal-in <format>`: legal in this format (`commander`, `standard`,
     `modern`, `pauper`, …)
-  - `--mana-value <n>` : mana value exacte
-  - `--mana-value-min <n>` / `--mana-value-max <n>` : plage de mana value
-    (bornes incluses, combinable avec `--mana-value` seulement si
-    cohérente)
-  - `--role <rôle>` : Rôle détecté (même détection que `kb analyze` :
-    `ramp`, `pioche`, `removal_cible`, `wipe`, `protection`, `terrain`),
-    répétable, combiné en ET. Une Correction (`kb override`) remplace les
-    Rôles, Thèmes et la légalité Commander détectés, ici comme partout
-    ailleurs
-  - `--theme <thème>` : Thème détecté (même détection que `kb analyze` :
-    `tokens`, `+1/+1`, `aristocrats`, `tribal:<sous-type>`), répétable,
-    combiné en ET
-  - `--exclude-deck <fichier|->` : exclut les Cartes présentes dans cette
-    Decklist (Commandant et Deck), même parsing que `kb analyze`
-- `kb set <code>` — informations d'un Set par code (`LEA`, `M19`, …)
-- `kb rulings "<nom exact>"` — Rulings datés d'une Carte, triés chronologiquement
-- `kb rules <numéro>` — une Règle (ou une Section, ex. `100`) et ses
-  sous-Règles (ex. `kb rules 100.1`, `kb rules 702.19a`)
-- `kb rules search "<texte>"` — recherche plein texte (FTS5, recherche de
-  phrase) dans les Règles, avec `--limit N`
-- `kb rules define "<terme>"` — définition d'un terme du Glossaire des
-  Comprehensive Rules
+  - `--mana-value <n>`: exact mana value
+  - `--mana-value-min <n>` / `--mana-value-max <n>`: mana value range
+    (inclusive bounds, combinable with `--mana-value` only if consistent)
+  - `--role <role>`: detected Role (same detection as `kb analyze`: `ramp`,
+    `pioche` (card draw), `removal_cible` (targeted removal), `wipe`,
+    `protection`, `terrain` (land)), repeatable, combined with AND
+  - `--theme <theme>`: detected Theme (same detection as `kb analyze`:
+    `tokens`, `+1/+1`, `aristocrats`, `tribal:<subtype>`), repeatable,
+    combined with AND
+  - `--exclude-deck <file|->`: excludes the Cards in this Decklist
+    (Commander and Deck), same parsing as `kb analyze`
+- `kb set <code>` — Set information by code (`LEA`, `M19`, …)
+- `kb rulings "<exact name>"` — dated Rulings of a Card, in chronological order
+- `kb rules <number>` — a Rule (or a Section, e.g. `100`) and its
+  sub-Rules (e.g. `kb rules 100.1`, `kb rules 702.19a`)
+- `kb rules search "<text>"` — full-text search (FTS5, phrase search) in the
+  Rules, with `--limit N`
+- `kb rules define "<term>"` — definition of a Comprehensive Rules Glossary
+  term
 
-Toutes acceptent `--format table` pour une sortie lisible en terminal ;
-JSON par défaut, à préférer pour tout traitement programmatique.
+All accept `--format table` for human-readable terminal output; JSON is the
+default and preferred for any programmatic use.
 
-## Quand les utiliser
+Roles, Themes and Commander legality reflect Corrections set with
+`kb override` (see the `mtg-deck-analyze` skill), in every command.
 
-- Vérifier la légalité, l'Identité de couleur ou le texte oracle d'une Carte
-  avant de la mentionner dans une analyse ou une Suggestion.
-- Explorer un Set (taille, date de sortie, bloc).
-- Retrouver l'historique des Rulings d'une Carte pour clarifier une
-  interaction.
-- Clarifier une interaction de règles précise (`kb rules <numéro>`) ou
-  retrouver la définition exacte d'un terme (`kb rules define`) avant de
-  trancher un point de jugement dans une analyse.
-- Investiguer librement au-delà des `candidates` de `kb analyze` : filtrer
-  par Rôle/Thème, plage de mana value ou motifs de texte oracle combinés,
-  en excluant les Cartes déjà dans le Deck, pour proposer une Suggestion
-  que `kb analyze` n'a pas remontée (voir le skill `mtg-deck-analyze`).
+## When to use them
 
-## Ce que ça ne fait pas
+- Check a Card's legality, color identity or oracle text before mentioning
+  it in an analysis or a Suggestion.
+- Explore a Set (size, release date, block).
+- Look up a Card's Rulings history to clarify an interaction.
+- Clarify a specific rules interaction (`kb rules <number>`) or find the
+  exact definition of a term (`kb rules define`) before settling a judgement
+  call in an analysis.
+- Search beyond the `candidates` of `kb analyze`: filter by Role/Theme, mana
+  value range or combined oracle text patterns, excluding Cards already in
+  the Deck, to propose a Suggestion `kb analyze` did not surface (see the
+  `mtg-deck-analyze` skill).
 
-- Pas de prix ni de collection.
-- Pas de SQL arbitraire : si un filtre manque, l'ajouter à `kb search`
-  plutôt que de contourner via une requête directe sur la base.
+## What it does not do
+
+- No prices or collection.
+- No arbitrary SQL: if a filter is missing, add it to `kb search` rather
+  than working around it with a direct query on the database.
