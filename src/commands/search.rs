@@ -5,7 +5,6 @@ use anyhow::{Context, Result};
 
 use crate::analyze::metrics::detect_roles;
 use crate::analyze::themes::detect_themes;
-use crate::data_dir::cards_db_path;
 use crate::db::cards::{CardsDb, SearchFilters};
 use crate::decklist::parser;
 use crate::model::Card;
@@ -28,7 +27,7 @@ pub fn run(
     limit: usize,
     format: Format,
 ) -> Result<()> {
-    let db = CardsDb::open(&cards_db_path())?;
+    let db = super::open_cards_db()?;
     let exclude_names = exclude_deck.as_deref().map(names_in_decklist).transpose()?;
 
     let results = search_cards(
@@ -151,6 +150,8 @@ fn print_table(cards: &[Card]) {
 mod tests {
     use super::*;
     use crate::db::fixture::{CardsFixture, FixtureCard};
+    use crate::db::overrides::Corrections;
+    use crate::model::CardCorrections;
 
     fn fixture_db() -> (tempfile::TempDir, CardsDb) {
         CardsFixture::new()
@@ -311,6 +312,61 @@ mod tests {
         assert!(
             !names.contains(&"Hypothetical Banned Removal"),
             "not legal in commander"
+        );
+    }
+
+    #[test]
+    fn role_theme_and_legality_filters_see_corrections() {
+        let (_dir, db) = fixture_db();
+        let db = db.with_corrections(Corrections::from([
+            (
+                "Vanilla Bear".to_string(),
+                CardCorrections {
+                    roles: Some(vec!["ramp".to_string()]),
+                    themes: Some(vec!["tokens".to_string()]),
+                    ..Default::default()
+                },
+            ),
+            (
+                "Hypothetical Banned Removal".to_string(),
+                CardCorrections {
+                    legal_in_commander: Some(true),
+                    ..Default::default()
+                },
+            ),
+            (
+                "Doom Blade".to_string(),
+                CardCorrections {
+                    legal_in_commander: Some(false),
+                    ..Default::default()
+                },
+            ),
+        ]));
+        let names = |results: Vec<Card>| -> Vec<String> {
+            let mut names: Vec<String> = results.into_iter().map(|c| c.name).collect();
+            names.sort();
+            names
+        };
+        assert_eq!(
+            names(search(&db, None, None, None, &["ramp"], &[], None, 50)),
+            vec!["Rampant Growth", "Vanilla Bear"]
+        );
+        assert_eq!(
+            names(search(&db, None, None, None, &[], &["tokens"], None, 50)),
+            vec!["Beast Within", "Vanilla Bear"]
+        );
+        assert_eq!(
+            names(search(
+                &db,
+                Some("B"),
+                Some("commander"),
+                None,
+                &["removal_cible"],
+                &[],
+                None,
+                50
+            )),
+            vec!["Hypothetical Banned Removal"]
         );
     }
 

@@ -74,6 +74,30 @@ impl Face {
     }
 }
 
+/// Valeurs fixées à la main pour une Carte (ADR 0005) ; `None` laisse la
+/// détection de `kb`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CardCorrections {
+    pub roles: Option<Vec<String>>,
+    pub themes: Option<Vec<String>>,
+    pub legal_in_commander: Option<bool>,
+}
+
+impl CardCorrections {
+    /// Noms des champs JSON de la Carte que ces Corrections remplacent.
+    pub fn overridden(&self) -> Vec<String> {
+        [
+            ("roles", self.roles.is_some()),
+            ("themes", self.themes.is_some()),
+            ("legal_in_commander", self.legal_in_commander.is_some()),
+        ]
+        .into_iter()
+        .filter(|(_, set)| *set)
+        .map(|(field, _)| field.to_string())
+        .collect()
+    }
+}
+
 /// Une Carte et ses Faces (ADR 0004). `mana_value` est celle de la Carte
 /// (celle qui compte hors de la pile), `front.mana_value` celle de la Face.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -83,10 +107,12 @@ pub struct Card {
     pub mana_value: Option<f64>,
     pub color_identity: Vec<String>,
     pub layout: Layout,
-    /// Au moins une Impression légale en Commander.
+    /// Au moins une Impression légale en Commander, sauf Correction.
     pub legal_in_commander: bool,
     pub front: Face,
     pub back: Option<Face>,
+    /// Posées par `CardsDb` ; `legal_in_commander` en tient déjà compte.
+    pub corrections: CardCorrections,
 }
 
 impl Card {
@@ -164,6 +190,9 @@ struct CardJson {
     legal_in_commander: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     faces: Vec<Face>,
+    /// Informatif : ignoré à la relecture.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    overridden: Vec<String>,
 }
 
 impl From<Card> for CardJson {
@@ -191,6 +220,7 @@ impl From<Card> for CardJson {
             layout: card.layout,
             legal_in_commander: card.legal_in_commander,
             faces,
+            overridden: card.corrections.overridden(),
         }
     }
 }
@@ -227,6 +257,7 @@ impl From<CardJson> for Card {
             legal_in_commander: json.legal_in_commander,
             front,
             back,
+            corrections: CardCorrections::default(),
         }
     }
 }
@@ -462,6 +493,27 @@ mod tests {
         assert_eq!(json["types"], serde_json::json!(["Sorcery"]));
         assert_eq!(json["layout"], "modal_dfc");
         assert_eq!(json["faces"][1]["name"], "Bala Ged Sanctuary");
+    }
+
+    #[test]
+    fn card_json_lists_the_corrected_fields_only_when_there_are_some() {
+        let mut card = bala_ged();
+        assert!(
+            serde_json::to_value(&card)
+                .unwrap()
+                .get("overridden")
+                .is_none()
+        );
+        card.corrections = CardCorrections {
+            roles: Some(vec![]),
+            legal_in_commander: Some(false),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&card).unwrap();
+        assert_eq!(
+            json["overridden"],
+            serde_json::json!(["roles", "legal_in_commander"])
+        );
     }
 
     #[test]

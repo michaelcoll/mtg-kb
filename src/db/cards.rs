@@ -3,7 +3,10 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, Row};
 
-use crate::model::{Card, Face, Layout, ReferencePrinting, Ruling, SetInfo, split_csv_field};
+use crate::db::overrides::Corrections;
+use crate::model::{
+    Card, CardCorrections, Face, Layout, ReferencePrinting, Ruling, SetInfo, split_csv_field,
+};
 
 /// Whitelist : le nom de colonne est injecté tel quel dans le SQL.
 const LEGALITY_FORMATS: &[&str] = &[
@@ -130,6 +133,7 @@ fn rows_to_cards(rows: impl IntoIterator<Item = CardRow>) -> Vec<Card> {
                 legal_in_commander: row.legal_in_commander,
                 front: row.face,
                 back: None,
+                corrections: CardCorrections::default(),
             }),
         }
     }
@@ -139,6 +143,7 @@ fn rows_to_cards(rows: impl IntoIterator<Item = CardRow>) -> Vec<Card> {
 #[derive(Debug)]
 pub struct CardsDb {
     conn: Connection,
+    corrections: Corrections,
 }
 
 impl CardsDb {
@@ -151,7 +156,64 @@ impl CardsDb {
         }
         let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .with_context(|| format!("impossible d'ouvrir la base cartes {}", path.display()))?;
-        Ok(Self { conn })
+        Ok(Self {
+            conn,
+            corrections: Corrections::new(),
+        })
+    }
+
+    /// Corrections (ADR 0005) appliquées à chaque Carte construite ensuite.
+    pub fn with_corrections(self, corrections: Corrections) -> Self {
+        Self {
+            corrections,
+            ..self
+        }
+    }
+
+    fn apply_corrections(&self, mut card: Card) -> Card {
+        if let Some(corrections) = self.corrections.get(&card.name) {
+            if let Some(legal) = corrections.legal_in_commander {
+                card.legal_in_commander = legal;
+            }
+            card.corrections = corrections.clone();
+        }
+        card
+    }
+
+    fn names_corrected_to(&self, legal: bool) -> Vec<&String> {
+        let mut names: Vec<&String> = self
+            .corrections
+            .iter()
+            .filter(|(_, c)| c.legal_in_commander == Some(legal))
+            .map(|(name, _)| name)
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// Légalité Commander d'Impression, sauf Correction de légalité.
+    fn commander_legality_condition(
+        &self,
+        params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
+    ) -> String {
+        let mut condition = printing_legal_in("commander");
+        let mut name_list = |names: Vec<&String>| {
+            params.extend(
+                names
+                    .iter()
+                    .map(|n| Box::new((*n).clone()) as Box<dyn rusqlite::types::ToSql>),
+            );
+            vec!["?"; names.len()].join(", ")
+        };
+        let banned = self.names_corrected_to(false);
+        if !banned.is_empty() {
+            condition = format!("({condition} AND c.name NOT IN ({}))", name_list(banned));
+        }
+        let legal = self.names_corrected_to(true);
+        if !legal.is_empty() {
+            condition = format!("({condition} OR c.name IN ({}))", name_list(legal));
+        }
+        condition
     }
 
     /// Par nom complet (`A // B` pour une Carte multi-face) ou par nom de la
@@ -168,7 +230,10 @@ impl CardsDb {
         let rows = stmt
             .query_map([name], card_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows_to_cards(rows).into_iter().next())
+        Ok(rows_to_cards(rows)
+            .into_iter()
+            .next()
+            .map(|card| self.apply_corrections(card)))
     }
 
     /// Cartes légales en Commander dans l'Identité de couleur donnée.
@@ -198,7 +263,11 @@ impl CardsDb {
                         LEGALITY_FORMATS.join(", ")
                     )
                 })?;
-            conditions.push(printing_legal_in(column));
+            conditions.push(if *column == "commander" {
+                self.commander_legality_condition(&mut params)
+            } else {
+                printing_legal_in(column)
+            });
         }
         if let Some(name) = &filters.name {
             conditions.push("c.name LIKE ?".to_string());
@@ -255,6 +324,7 @@ impl CardsDb {
 
         let mut results: Vec<Card> = rows_to_cards(rows)
             .into_iter()
+            .map(|card| self.apply_corrections(card))
             .filter(|card| {
                 filters
                     .color_identity_subset_of
@@ -377,6 +447,7 @@ impl CardsDb {
 mod tests {
     use super::*;
     use crate::db::fixture::{CardsFixture, FixtureCard};
+    use crate::db::overrides::Corrections;
 
     fn base_fixture() -> CardsFixture {
         let sylvan = |uuid| {
@@ -672,6 +743,96 @@ mod tests {
         let pool = db.commander_pool(&["G".to_string()]).unwrap();
         let names: Vec<_> = pool.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, vec!["Llanowar Elves", "Sol Ring", "Sylvan Library"]);
+    }
+
+    fn corrected(name: &str, correction: CardCorrections) -> Corrections {
+        Corrections::from([(name.to_string(), correction)])
+    }
+
+    fn legality(name: &str, legal: bool) -> Corrections {
+        corrected(
+            name,
+            CardCorrections {
+                legal_in_commander: Some(legal),
+                ..Default::default()
+            },
+        )
+    }
+
+    fn commander_legal_names(db: &CardsDb) -> Vec<String> {
+        db.search(&SearchFilters {
+            legal_in_format: Some("commander".to_string()),
+            ..Default::default()
+        })
+        .unwrap()
+        .into_iter()
+        .map(|c| c.name)
+        .collect()
+    }
+
+    #[test]
+    fn a_card_carries_its_corrections() {
+        let (_dir, db) = fixture_db();
+        let roles = CardCorrections {
+            roles: Some(vec!["ramp".to_string()]),
+            ..Default::default()
+        };
+        let db = db.with_corrections(corrected("Sylvan Library", roles.clone()));
+        assert_eq!(
+            db.card("Sylvan Library").unwrap().unwrap().corrections,
+            roles
+        );
+        assert_eq!(
+            db.card("Sol Ring").unwrap().unwrap().corrections,
+            CardCorrections::default()
+        );
+    }
+
+    #[test]
+    fn a_correction_applies_to_a_multi_face_card_resolved_by_its_front_face() {
+        let (_dir, db) = fixture_db_with_multiface();
+        let db = db.with_corrections(legality("Fire // Ice", false));
+        assert!(!db.card("Fire").unwrap().unwrap().legal_in_commander);
+    }
+
+    #[test]
+    fn a_banning_correction_makes_the_card_illegal_everywhere() {
+        let (_dir, db) = fixture_db();
+        let db = db.with_corrections(legality("Sol Ring", false));
+        assert!(!db.card("Sol Ring").unwrap().unwrap().legal_in_commander);
+        assert!(!commander_legal_names(&db).contains(&"Sol Ring".to_string()));
+        let pool = db.commander_pool(&["G".to_string()]).unwrap();
+        assert!(!pool.iter().any(|c| c.name == "Sol Ring"));
+    }
+
+    #[test]
+    fn a_legalizing_correction_makes_the_card_legal_everywhere() {
+        let (_dir, db) = fixture_db();
+        let db = db.with_corrections(legality("Command Tower", true));
+        assert!(
+            db.card("Command Tower")
+                .unwrap()
+                .unwrap()
+                .legal_in_commander
+        );
+        assert!(commander_legal_names(&db).contains(&"Command Tower".to_string()));
+        let pool = db.commander_pool(&["G".to_string()]).unwrap();
+        assert!(pool.iter().any(|c| c.name == "Command Tower"));
+    }
+
+    #[test]
+    fn a_legality_correction_keeps_the_other_search_filters() {
+        let (_dir, db) = fixture_db();
+        let db = db.with_corrections(legality("Command Tower", true));
+        let results = db
+            .search(&SearchFilters {
+                legal_in_format: Some("commander".to_string()),
+                name: Some("Sol".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        let names: Vec<_> = results.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["Sol Ring"]);
     }
 
     #[test]

@@ -8,7 +8,7 @@ use crate::analyze::external::edhrec::{EdhrecClient, HttpEdhrecClient};
 use crate::analyze::external::recommander::{HttpRecommanderClient, RecommanderClient};
 use crate::analyze::external::{self, ExternalSourcesResult};
 use crate::analyze::metrics::Thresholds;
-use crate::data_dir::{cards_db_path, edhrec_cache_dir};
+use crate::data_dir::edhrec_cache_dir;
 use crate::db::cards::CardsDb;
 use crate::model::AnalyzeResult;
 use crate::output::print_json;
@@ -45,7 +45,7 @@ pub fn run(
         max_high_cost_cards,
     };
 
-    let db = CardsDb::open(&cards_db_path())?;
+    let db = super::open_cards_db()?;
     let result = analyze_deck(
         &input,
         &db,

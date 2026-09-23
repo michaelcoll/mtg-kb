@@ -192,6 +192,8 @@ fn is_color_identity_subset(card_identity: &[String], commander_identity: &[Stri
 mod tests {
     use super::*;
     use crate::db::fixture::{CardsFixture, FixtureCard};
+    use crate::db::overrides::Corrections;
+    use crate::model::CardCorrections;
 
     fn atraxa() -> FixtureCard {
         FixtureCard::new("atraxa", "Atraxa, Praetors' Voice")
@@ -353,6 +355,154 @@ mod tests {
         assert_eq!(result.mana_base.land_count, 98);
         assert_eq!(result.role_counts.get("terrain"), Some(&98));
         assert_eq!(result.role_counts.get("ramp"), Some(&1));
+    }
+
+    fn corrections(entries: &[(&str, CardCorrections)]) -> Corrections {
+        entries
+            .iter()
+            .map(|(name, c)| (name.to_string(), c.clone()))
+            .collect()
+    }
+
+    fn roles(values: &[&str]) -> CardCorrections {
+        CardCorrections {
+            roles: Some(values.iter().map(|v| v.to_string()).collect()),
+            ..Default::default()
+        }
+    }
+
+    /// Deck vert : deux Sorts sans Rôle détecté, un faux wipe dans le Deck
+    /// et un faux wipe dans le pool des Candidats.
+    fn fixture_db_for_corrections() -> (tempfile::TempDir, CardsDb) {
+        CardsFixture::new()
+            .cards([
+                atraxa(),
+                forest(),
+                FixtureCard::new("crippling", "Crippling Fear")
+                    .types("Sorcery")
+                    .text("Choose a creature type. Creatures that aren't of the chosen type get -3/-3 until end of turn.")
+                    .identity("B"),
+                FixtureCard::new("swarmyard", "Swarmyard Massacre")
+                    .types("Sorcery")
+                    .text("Creatures your opponents control get -1/-1 until end of turn for each Insect you control.")
+                    .identity("B"),
+                FixtureCard::new("drudge", "Drudge Spell")
+                    .types("Enchantment")
+                    .text("When Drudge Spell leaves the battlefield, destroy all Skeleton tokens.")
+                    .identity("B"),
+                FixtureCard::new("saproling", "Saproling Burst")
+                    .types("Enchantment")
+                    .text("When Saproling Burst leaves the battlefield, destroy all tokens created with it.")
+                    .identity("G"),
+            ])
+            .build()
+    }
+
+    fn corrected_deck() -> String {
+        deck_of(
+            96,
+            "1 Crippling Fear\n1 Swarmyard Massacre\n1 Drudge Spell\n",
+        )
+    }
+
+    #[test]
+    fn role_corrections_feed_role_counts_and_weaknesses() {
+        let (_dir, db) = fixture_db_for_corrections();
+        let result = run(&corrected_deck(), &db, &metrics::Thresholds::default()).unwrap();
+        assert_eq!(
+            result.role_counts.get("wipe"),
+            Some(&1),
+            "detected: Drudge Spell"
+        );
+        assert!(
+            result
+                .weaknesses
+                .iter()
+                .any(|w| w.contains("Wipe sous-représenté"))
+        );
+
+        let db = db.with_corrections(corrections(&[
+            ("Crippling Fear", roles(&["wipe"])),
+            ("Swarmyard Massacre", roles(&["wipe", "grave_hate"])),
+            ("Drudge Spell", roles(&[])),
+        ]));
+        let result = run(&corrected_deck(), &db, &metrics::Thresholds::default()).unwrap();
+        assert_eq!(result.role_counts.get("wipe"), Some(&2));
+        assert_eq!(result.role_counts.get("grave_hate"), Some(&1));
+        assert!(
+            !result
+                .weaknesses
+                .iter()
+                .any(|w| w.contains("Wipe sous-représenté"))
+        );
+        assert!(
+            !result
+                .weaknesses
+                .iter()
+                .any(|w| w.to_lowercase().contains("grave")),
+            "a role without threshold never yields a weakness: {:?}",
+            result.weaknesses
+        );
+        let drudge = result
+            .cards
+            .iter()
+            .find(|c| c.card.name == "Drudge Spell")
+            .unwrap();
+        assert!(drudge.roles.is_empty());
+        let json = serde_json::to_value(drudge).unwrap();
+        assert_eq!(json["card"]["overridden"], serde_json::json!(["roles"]));
+    }
+
+    #[test]
+    fn role_corrections_apply_to_candidates() {
+        let (_dir, db) = fixture_db_for_corrections();
+        let deck = deck_of(98, "1 Crippling Fear\n");
+        let result = run(&deck, &db, &metrics::Thresholds::default()).unwrap();
+        assert!(
+            result
+                .candidates
+                .iter()
+                .any(|c| c.card.name == "Saproling Burst")
+        );
+
+        let db = db.with_corrections(corrections(&[
+            ("Saproling Burst", roles(&[])),
+            ("Swarmyard Massacre", roles(&["wipe"])),
+        ]));
+        let result = run(&deck, &db, &metrics::Thresholds::default()).unwrap();
+        let names: Vec<_> = result
+            .candidates
+            .iter()
+            .map(|c| c.card.name.as_str())
+            .collect();
+        assert!(!names.contains(&"Saproling Burst"), "{names:?}");
+        assert!(names.contains(&"Swarmyard Massacre"), "{names:?}");
+    }
+
+    #[test]
+    fn a_banning_correction_flags_the_deck_card_and_drops_the_candidate() {
+        let (_dir, db) = fixture_db_for_corrections();
+        let banned = CardCorrections {
+            legal_in_commander: Some(false),
+            ..Default::default()
+        };
+        let db = db.with_corrections(corrections(&[
+            ("Drudge Spell", banned.clone()),
+            ("Saproling Burst", banned),
+        ]));
+        let result = run(&corrected_deck(), &db, &metrics::Thresholds::default()).unwrap();
+        assert!(
+            result
+                .weaknesses
+                .iter()
+                .any(|w| w.contains("Drudge Spell") && w.contains("légale"))
+        );
+        assert!(
+            !result
+                .candidates
+                .iter()
+                .any(|c| c.card.name == "Saproling Burst")
+        );
     }
 
     fn goblin(uuid: &str, name: &str, identity: &str) -> FixtureCard {
