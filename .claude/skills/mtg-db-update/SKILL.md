@@ -1,38 +1,39 @@
 ---
 name: mtg-db-update
-description: Met à jour les bases locales (Base cartes MTGJSON et Base règles Wizards) via kb update. À déclencher UNIQUEMENT sur demande explicite de l'utilisateur (ex. "mets à jour la base cartes", "récupère les dernières règles") — jamais de façon proactive, car ces téléchargements remplacent des fichiers de données locaux.
+description: Updates the local databases (MTGJSON card database and Wizards rules database) via kb update. Trigger ONLY on an explicit user request (e.g. "update the card database", "mets à jour la base cartes", "récupère les dernières règles") — never proactively, since these downloads replace local data files.
 ---
 
 # mtg-db-update
 
-`kb update` télécharge et remplace les bases locales, sans jamais modifier le
-schéma ni laisser de fichier corrompu en cas d'échec : téléchargement dans un
-`.tmp`, validation, puis remplacement atomique. L'ancienne base est écrasée
-sans copie `.bak`.
+`kb update` downloads and replaces the local databases without ever changing
+the schema or leaving a corrupt file behind on failure: it downloads to a
+`.tmp`, validates it, then replaces atomically. The old database is
+overwritten without a `.bak` copy.
 
-## Commandes
+## Commands
 
-- `kb update cards` — télécharge `https://mtgjson.com/api/v5/AllPrintings.sqlite`
-  dans `data/AllPrintings.tmp`, vérifie que la table `meta` est lisible et
-  que sa `version` diffère de la base en place, puis remplace atomiquement
-  `data/AllPrintings.sqlite`. Ne fait rien de plus si la version est déjà à
-  jour (le `.tmp` est supprimé).
-- `kb update rules [--url <url>]` — découvre (ou reçoit en argument) l'URL du
-  document officiel Wizards, le télécharge, le découpe en Sections/Règles/
-  Glossaire, construit `data/rules.tmp`, valide qu'elle s'ouvre correctement,
-  puis remplace atomiquement `data/rules.sqlite`. Ne fait rien si la version
-  (date embarquée dans le nom de fichier Wizards) est déjà celle en place.
-- `kb update` (sans argument) — exécute les deux, cartes puis règles.
+- `kb update cards` — downloads `https://mtgjson.com/api/v5/AllPrintings.sqlite`
+  to `data/AllPrintings.tmp`, checks that the `meta` table is readable and
+  that its `version` differs from the current database, then atomically
+  replaces `data/AllPrintings.sqlite`. Does nothing more if the version is
+  already current (the `.tmp` is deleted).
+- `kb update rules [--url <url>]` — discovers (or takes as an argument) the
+  URL of the official Wizards document, downloads it, splits it into
+  Sections/Rules/Glossary, builds `data/rules.tmp`, checks that it opens
+  correctly, then atomically replaces `data/rules.sqlite`. Does nothing if
+  the version (date embedded in the Wizards file name) is already in place.
+- `kb update` (no argument) — runs both, cards then rules.
 
-## Quand l'utiliser
+## When to use it
 
-Uniquement quand l'utilisateur le demande explicitement. Ne jamais lancer
-une mise à jour de façon proactive : c'est un téléchargement de plusieurs
-centaines de mégaoctets (Base cartes) qui remplace des données locales.
+Only when the user explicitly asks. Never start an update proactively: the
+card database is a download of several hundred megabytes that replaces
+local data.
 
-## Ce que ça ne fait pas
+## What it does not do
 
-- Pas de sauvegarde `.bak` de l'ancienne base : le remplacement est
-  définitif dès que la nouvelle base est validée.
-- Pas de mise à jour partielle ou incrémentale : chaque `kb update`
-  retélécharge la base entière.
+- No `.bak` backup of the old database: the replacement is final as soon as
+  the new database is validated.
+- No partial or incremental update: every `kb update` downloads the whole
+  database again.
+- Never touches `data/overrides.sqlite` (Corrections).
