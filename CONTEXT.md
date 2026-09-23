@@ -86,7 +86,7 @@ Un écart mesurable du Deck par rapport à une attente : Rôle sous-représenté
 _Avoid_: Problème, défaut
 
 **Candidat**:
-Une Carte légale en Commander, dans l'Identité de couleur du Commandant, absente du Deck, retenue par `kb analyze` sur tout le pool des Cartes légales (pas seulement un extrait alphabétique) pour correspondre à un Rôle sous-représenté ou à un Thème majeur du Deck ; au plus 10 Candidats par Rôle sous-représenté et par Thème majeur, dédupliqués. Base des Suggestions choisies par Claude.
+Une Carte légale en Commander, dans l'Identité de couleur du Commandant, absente du Deck, retenue par `kb analyze` sur tout le pool des Cartes légales (pas seulement un extrait alphabétique) pour correspondre à un Rôle sous-représenté ou à un Thème majeur du Deck ; au plus 10 Candidats par Rôle sous-représenté et par Thème majeur, dédupliqués. Base des Suggestions choisies lors de l'analyse.
 _Avoid_: Suggestion (qui désigne le choix final, pas le calcul de `kb`), résultat de recherche
 
 **Source externe**:
@@ -98,7 +98,7 @@ Une Carte proposée par une Source externe, après filtrage par `kb` (résolue, 
 _Avoid_: Suggestion, Candidat
 
 **Origine**:
-La provenance d'une Suggestion : Candidat de `kb`, Recommandation externe d'une Source, ou investigation de Claude hors de ces listes ; une Suggestion peut avoir plusieurs Origines.
+La provenance d'une Suggestion : Candidat de `kb`, Recommandation externe d'une Source, ou investigation hors de ces listes ; une Suggestion peut avoir plusieurs Origines.
 _Avoid_: Source (qui désigne le service tiers)
 
 **Suggestion**:
