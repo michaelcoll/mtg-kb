@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use anyhow::Result;
 
 use crate::db::cards::CardsDb;
+use crate::deck_context::DeckContext;
 use crate::model::Candidate;
 
 use super::ranking::sort_desc_by_score_then_name;
@@ -10,23 +11,21 @@ use super::themes;
 
 const CANDIDATE_LIMIT_PER_BUCKET: usize = 10;
 
-/// Cartes légales Commander, dans l'Identité de couleur du Commandant,
-/// absentes du Deck, réparties en Candidats : jusqu'à
+/// Cartes éligibles (`DeckContext`) réparties en Candidats : jusqu'à
 /// `CANDIDATE_LIMIT_PER_BUCKET` par Rôle sous-représenté et par Thème majeur,
 /// dédupliqués par nom. Un Candidat porte tous les Rôles/Thèmes du Deck qu'il
 /// matche. Les Cartes qui n'en matchent aucun sont écartées.
 pub fn find_candidates(
     db: &CardsDb,
-    color_identity: &[String],
-    deck_names: &HashSet<String>,
+    deck: &DeckContext,
     major_themes: &HashSet<String>,
     weak_roles: &[String],
 ) -> Result<Vec<Candidate>> {
-    let pool = db.commander_pool(color_identity)?;
+    let pool = db.commander_pool(deck.commander_identity())?;
 
     let scored: Vec<Candidate> = pool
         .into_iter()
-        .filter(|card| !deck_names.contains(&card.name))
+        .filter(|card| deck.eligibility(card).is_ok())
         .filter_map(|card| {
             let card_themes = themes::detect_themes(&card);
             let matched_themes: Vec<String> = card_themes
@@ -91,6 +90,14 @@ fn top_matches(scored: &[Candidate], matches: impl Fn(&Candidate) -> bool) -> Ve
 mod tests {
     use super::*;
     use crate::db::fixture::{CardsFixture, FixtureCard};
+    use crate::model::Card;
+
+    /// Commandant d'Identité `identity` et Deck des Cartes `deck_names`.
+    fn deck(identity: &[&str], deck_names: &[&str]) -> DeckContext {
+        let commander = Card::named("Test Commander", identity);
+        let cards: Vec<Card> = deck_names.iter().map(|n| Card::named(n, &[])).collect();
+        DeckContext::new(&commander, &cards)
+    }
 
     fn fixture_db() -> (tempfile::TempDir, CardsDb) {
         CardsFixture::new()
@@ -164,14 +171,9 @@ mod tests {
     #[test]
     fn excludes_cards_already_in_deck_and_out_of_color() {
         let (_dir, db) = fixture_db();
-        let mut deck_names = HashSet::new();
-        deck_names.insert("Rampant Growth".to_string());
-        let color_identity = vec!["G".to_string()];
-
         let candidates = find_candidates(
             &db,
-            &color_identity,
-            &deck_names,
+            &deck(&["G"], &["Rampant Growth"]),
             &HashSet::new(),
             &["ramp".to_string()],
         )
@@ -192,14 +194,12 @@ mod tests {
     #[test]
     fn scores_higher_for_weak_role_than_theme_only() {
         let (_dir, db) = fixture_db();
-        let color_identity = vec!["G".to_string(), "R".to_string()];
         let mut major_themes = HashSet::new();
         major_themes.insert("tokens".to_string());
 
         let candidates = find_candidates(
             &db,
-            &color_identity,
-            &HashSet::new(),
+            &deck(&["G", "R"], &[]),
             &major_themes,
             &["ramp".to_string()],
         )
@@ -221,9 +221,7 @@ mod tests {
     #[test]
     fn excludes_zero_score_candidates() {
         let (_dir, db) = fixture_db();
-        let color_identity = vec!["G".to_string()];
-        let candidates =
-            find_candidates(&db, &color_identity, &HashSet::new(), &HashSet::new(), &[]).unwrap();
+        let candidates = find_candidates(&db, &deck(&["G"], &[]), &HashSet::new(), &[]).unwrap();
         assert!(
             !candidates.iter().any(|c| c.card.name == "Grizzly Bears"),
             "vanilla creature matches nothing, should be excluded"
@@ -233,12 +231,10 @@ mod tests {
     #[test]
     fn a_late_alphabet_card_can_be_a_candidate_in_a_500_plus_card_pool() {
         let (_dir, db) = large_fixture_db(520, false);
-        let color_identity = vec!["G".to_string()];
 
         let candidates = find_candidates(
             &db,
-            &color_identity,
-            &HashSet::new(),
+            &deck(&["G"], &[]),
             &HashSet::new(),
             &["ramp".to_string()],
         )
@@ -256,12 +252,10 @@ mod tests {
     #[test]
     fn caps_at_ten_candidates_per_weak_role_without_duplicates() {
         let (_dir, db) = large_fixture_db(520, true);
-        let color_identity = vec!["G".to_string()];
 
         let candidates = find_candidates(
             &db,
-            &color_identity,
-            &HashSet::new(),
+            &deck(&["G"], &[]),
             &HashSet::new(),
             &["ramp".to_string()],
         )
@@ -279,15 +273,13 @@ mod tests {
     #[test]
     fn caps_at_ten_candidates_per_major_theme_without_duplicates() {
         let (_dir, db) = large_fixture_db(520, true);
-        let color_identity = vec!["G".to_string()];
         // Toutes les Cartes de la fixture (y compris "Z...") sont des Elfes :
         // "tribal:Elf" est ici traité comme Thème majeur pour vérifier le
         // plafond par Thème, indépendamment du plafond par Rôle.
         let mut major_themes = HashSet::new();
         major_themes.insert("tribal:Elf".to_string());
 
-        let candidates =
-            find_candidates(&db, &color_identity, &HashSet::new(), &major_themes, &[]).unwrap();
+        let candidates = find_candidates(&db, &deck(&["G"], &[]), &major_themes, &[]).unwrap();
 
         assert_eq!(candidates.len(), CANDIDATE_LIMIT_PER_BUCKET);
         let unique: HashSet<&str> = candidates.iter().map(|c| c.card.name.as_str()).collect();
@@ -297,7 +289,6 @@ mod tests {
     #[test]
     fn weak_role_and_major_theme_buckets_are_deduplicated_in_the_union() {
         let (_dir, db) = large_fixture_db(520, true);
-        let color_identity = vec!["G".to_string()];
         let mut major_themes = HashSet::new();
         major_themes.insert("tribal:Elf".to_string());
 
@@ -306,8 +297,7 @@ mod tests {
         // entièrement, donc l'union dédupliquée ne doit pas dépasser 10.
         let candidates = find_candidates(
             &db,
-            &color_identity,
-            &HashSet::new(),
+            &deck(&["G"], &[]),
             &major_themes,
             &["ramp".to_string()],
         )

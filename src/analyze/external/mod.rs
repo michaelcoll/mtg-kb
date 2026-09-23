@@ -4,13 +4,13 @@ pub mod cache;
 pub mod edhrec;
 pub mod recommander;
 
-use std::collections::HashSet;
 use std::path::Path;
 use std::time::Duration;
 
 use anyhow::Result;
 
 use crate::db::cards::CardsDb;
+use crate::deck_context::DeckContext;
 use crate::model::{
     AnalyzeResult, Card, EdhrecRecommendation, RecommanderRecommendation, SourceError,
 };
@@ -38,7 +38,7 @@ pub fn fetch_all(
     recommander_client: &dyn recommander::RecommanderClient,
     edhrec_cache_dir: &Path,
 ) -> ExternalSourcesResult {
-    let deck_names = deck_names_including_commander(analysis);
+    let deck = DeckContext::from_analysis(analysis);
     let mut result = ExternalSourcesResult::default();
 
     match edhrec::fetch_and_filter(
@@ -47,7 +47,7 @@ pub fn fetch_all(
         EDHREC_CACHE_TTL,
         analysis,
         db,
-        &deck_names,
+        &deck,
     ) {
         Ok((recommendations, unresolved_names)) => {
             result.edhrec_recommendations = recommendations;
@@ -59,7 +59,7 @@ pub fn fetch_all(
         }),
     }
 
-    match recommander::fetch_and_filter(recommander_client, analysis, db, &deck_names) {
+    match recommander::fetch_and_filter(recommander_client, analysis, db, &deck) {
         Ok((recommendations, unresolved_names)) => {
             result.recommander_recommendations = recommendations;
             result.recommander_unresolved_names = unresolved_names;
@@ -73,22 +73,15 @@ pub fn fetch_all(
     result
 }
 
-fn deck_names_including_commander(analysis: &AnalyzeResult) -> HashSet<String> {
-    let mut names: HashSet<String> = analysis.cards.iter().map(|c| c.card.name.clone()).collect();
-    names.insert(analysis.commander.name.clone());
-    names
-}
-
 type ResolvedAndUnresolved<M> = (Vec<(Card, M)>, Vec<String>);
 
 /// Garde, dans l'ordre d'entrée et au plus `MAX_RECOMMENDATIONS_PER_SOURCE`,
-/// les Cartes résolues, légales en Commander, dans l'Identité de couleur et
-/// absentes du Deck ; les noms non résolus sont listés à part.
+/// les Cartes résolues et éligibles (`DeckContext`) ; les noms non résolus
+/// sont listés à part.
 pub(super) fn resolve_and_filter<M>(
     items: Vec<(String, M)>,
     db: &CardsDb,
-    color_identity: &[String],
-    deck_names: &HashSet<String>,
+    deck: &DeckContext,
 ) -> Result<ResolvedAndUnresolved<M>> {
     let mut resolved = Vec::new();
     let mut unresolved_names = Vec::new();
@@ -101,20 +94,9 @@ pub(super) fn resolve_and_filter<M>(
             unresolved_names.push(name);
             continue;
         };
-        if deck_names.contains(&card.name) {
-            continue;
+        if deck.eligibility(&card).is_ok() {
+            resolved.push((card, meta));
         }
-        if !card
-            .color_identity
-            .iter()
-            .all(|c| color_identity.iter().any(|a| a.eq_ignore_ascii_case(c)))
-        {
-            continue;
-        }
-        if !card.legal_in_commander {
-            continue;
-        }
-        resolved.push((card, meta));
     }
 
     Ok((resolved, unresolved_names))
@@ -138,14 +120,20 @@ mod tests {
             .build()
     }
 
+    /// Deck d'un Commandant vert contenant les Cartes `deck_names`.
+    fn green_deck(deck_names: &[&str]) -> DeckContext {
+        let commander = Card::named("Test Commander", &["G"]);
+        let cards: Vec<Card> = deck_names.iter().map(|n| Card::named(n, &["G"])).collect();
+        DeckContext::new(&commander, &cards)
+    }
+
     #[test]
     fn keeps_legal_in_identity_absent_cards() {
         let (_dir, db) = fixture_db();
         let (resolved, unresolved) = resolve_and_filter(
             vec![("Rampant Growth".to_string(), 1.0)],
             &db,
-            &["G".to_string()],
-            &HashSet::new(),
+            &green_deck(&[]),
         )
         .unwrap();
         assert_eq!(resolved.len(), 1);
@@ -158,8 +146,7 @@ mod tests {
         let (resolved, _) = resolve_and_filter(
             vec![("Lightning Bolt".to_string(), 1.0)],
             &db,
-            &["G".to_string()],
-            &HashSet::new(),
+            &green_deck(&[]),
         )
         .unwrap();
         assert!(resolved.is_empty(), "Lightning Bolt is red, outside G");
@@ -168,26 +155,18 @@ mod tests {
     #[test]
     fn filters_out_illegal_cards() {
         let (_dir, db) = fixture_db();
-        let (resolved, _) = resolve_and_filter(
-            vec![("Channel".to_string(), 1.0)],
-            &db,
-            &["G".to_string()],
-            &HashSet::new(),
-        )
-        .unwrap();
+        let (resolved, _) =
+            resolve_and_filter(vec![("Channel".to_string(), 1.0)], &db, &green_deck(&[])).unwrap();
         assert!(resolved.is_empty(), "Channel is banned in Commander");
     }
 
     #[test]
     fn filters_out_cards_already_in_the_deck() {
         let (_dir, db) = fixture_db();
-        let mut deck_names = HashSet::new();
-        deck_names.insert("Llanowar Elves".to_string());
         let (resolved, _) = resolve_and_filter(
             vec![("Llanowar Elves".to_string(), 1.0)],
             &db,
-            &["G".to_string()],
-            &deck_names,
+            &green_deck(&["Llanowar Elves"]),
         )
         .unwrap();
         assert!(resolved.is_empty());
@@ -199,8 +178,7 @@ mod tests {
         let (resolved, unresolved) = resolve_and_filter(
             vec![("Not A Real Card".to_string(), 1.0)],
             &db,
-            &["G".to_string()],
-            &HashSet::new(),
+            &green_deck(&[]),
         )
         .unwrap();
         assert!(resolved.is_empty());
@@ -217,8 +195,7 @@ mod tests {
                 FixtureCard::new(&format!("card-{i}"), &format!("Test Card {i}")).identity("G")
             }))
             .build();
-        let (resolved, _) =
-            resolve_and_filter(items, &db, &["G".to_string()], &HashSet::new()).unwrap();
+        let (resolved, _) = resolve_and_filter(items, &db, &green_deck(&[])).unwrap();
         assert_eq!(resolved.len(), MAX_RECOMMENDATIONS_PER_SOURCE);
     }
 
@@ -298,6 +275,38 @@ mod tests {
         assert_eq!(result.source_errors.len(), 1);
         assert_eq!(result.source_errors[0].source, "edhrec");
         assert_eq!(result.recommander_recommendations.len(), 1);
+    }
+
+    #[test]
+    fn the_commander_is_never_an_external_recommendation() {
+        let (_dir, db) = CardsFixture::new()
+            .cards([
+                FixtureCard::new("commander", "Test Commander").identity("G"),
+                FixtureCard::new("rampant", "Rampant Growth").identity("G"),
+            ])
+            .build();
+        let recommander_json = serde_json::json!({
+            "data": {"recommendations": [
+                {"name": "Test Commander", "score": 9.0},
+                {"name": "Rampant Growth", "score": 5.0}
+            ]}
+        })
+        .to_string();
+
+        let result = fetch_all(
+            &db,
+            &sample_analysis(),
+            &FailingEdhrecClient,
+            &StubRecommanderClient(recommander_json),
+            dir_for_test().path(),
+        );
+
+        let names: Vec<_> = result
+            .recommander_recommendations
+            .iter()
+            .map(|r| r.card.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["Rampant Growth"]);
     }
 
     #[test]

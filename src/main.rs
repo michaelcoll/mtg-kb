@@ -3,6 +3,7 @@ mod cli;
 mod commands;
 mod data_dir;
 mod db;
+mod deck_context;
 mod decklist;
 mod model;
 mod output;

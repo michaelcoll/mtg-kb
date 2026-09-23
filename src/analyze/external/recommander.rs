@@ -1,14 +1,13 @@
 //! Client Recommander : recommande à partir de la Decklist complète (sans
 //! terrains de base).
 
-use std::collections::HashSet;
-
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
 use super::resolve_and_filter;
 use crate::analyze::ranking::sort_desc_by_score_then_name;
 use crate::db::cards::CardsDb;
+use crate::deck_context::DeckContext;
 use crate::model::{AnalyzeResult, RecommanderRecommendation};
 
 const RECOMMANDER_URL: &str =
@@ -87,14 +86,13 @@ pub fn fetch_and_filter(
     client: &dyn RecommanderClient,
     analysis: &AnalyzeResult,
     db: &CardsDb,
-    deck_names: &HashSet<String>,
+    deck: &DeckContext,
 ) -> Result<(Vec<RecommanderRecommendation>, Vec<String>)> {
     let body = request_body(analysis);
     let raw_json = client.fetch(&body)?;
     let items = parse(&raw_json)?;
 
-    let (resolved, unresolved_names) =
-        resolve_and_filter(items, db, &analysis.commander.color_identity, deck_names)?;
+    let (resolved, unresolved_names) = resolve_and_filter(items, db, deck)?;
 
     let recommendations = resolved
         .into_iter()
@@ -195,8 +193,14 @@ mod tests {
         })
         .to_string();
         let client = StubClient(raw);
-        let (recommendations, unresolved) =
-            fetch_and_filter(&client, &sample_analysis(), &db, &HashSet::new()).unwrap();
+        let analysis = sample_analysis();
+        let (recommendations, unresolved) = fetch_and_filter(
+            &client,
+            &analysis,
+            &db,
+            &DeckContext::from_analysis(&analysis),
+        )
+        .unwrap();
 
         let names: Vec<&str> = recommendations
             .iter()
@@ -215,8 +219,14 @@ mod tests {
         let (_dir, db) = fixture_db();
         let raw = serde_json::json!({"data": {"recommendations": []}}).to_string();
         let client = StubClient(raw);
-        let (recommendations, unresolved) =
-            fetch_and_filter(&client, &sample_analysis(), &db, &HashSet::new()).unwrap();
+        let analysis = sample_analysis();
+        let (recommendations, unresolved) = fetch_and_filter(
+            &client,
+            &analysis,
+            &db,
+            &DeckContext::from_analysis(&analysis),
+        )
+        .unwrap();
         assert!(recommendations.is_empty());
         assert!(unresolved.is_empty());
     }

@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, HashSet};
 use anyhow::{Result, bail};
 
 use crate::db::cards::CardsDb;
+use crate::deck_context::DeckContext;
 use crate::decklist::parser::{self, DecklistLine};
 use crate::model::{AnalyzeResult, ResolvedCard, Synergy, UnresolvedLine};
 
@@ -69,6 +70,7 @@ pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Resul
         ));
     }
 
+    let deck = DeckContext::new(&commander, cards.iter().map(|c| &c.card));
     for resolved in &cards {
         if resolved.quantity > 1 && !resolved.card.is_basic_land() {
             construction_errors.push(format!(
@@ -76,7 +78,7 @@ pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Resul
                 resolved.card.name, resolved.quantity
             ));
         }
-        if !is_color_identity_subset(&resolved.card.color_identity, &commander.color_identity) {
+        if !deck.is_within_identity(&resolved.card) {
             construction_errors.push(format!(
                 "« {} » (Identité de couleur {:?}) dépasse l'Identité de couleur du Commandant {:?}",
                 resolved.card.name, resolved.card.color_identity, commander.color_identity
@@ -107,7 +109,6 @@ pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Resul
 
     let synergies = find_synergies(&cards);
 
-    let deck_names: HashSet<String> = cards.iter().map(|c| c.card.name.clone()).collect();
     let mut theme_counts: BTreeMap<String, u32> = BTreeMap::new();
     for resolved in &cards {
         for theme in &resolved.themes {
@@ -121,13 +122,7 @@ pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Resul
         .map(|(theme, _)| theme)
         .collect();
     let weak_roles = metrics::weak_role_names(&role_counts, thresholds);
-    let candidates = candidates::find_candidates(
-        db,
-        &commander.color_identity,
-        &deck_names,
-        &major_themes,
-        &weak_roles,
-    )?;
+    let candidates = candidates::find_candidates(db, &deck, &major_themes, &weak_roles)?;
 
     Ok(AnalyzeResult {
         commander,
@@ -180,12 +175,6 @@ fn aggregate(lines: Vec<DecklistLine>) -> Vec<DecklistLine> {
         }
     }
     merged
-}
-
-fn is_color_identity_subset(card_identity: &[String], commander_identity: &[String]) -> bool {
-    card_identity
-        .iter()
-        .all(|c| commander_identity.iter().any(|a| a.eq_ignore_ascii_case(c)))
 }
 
 #[cfg(test)]
@@ -572,6 +561,28 @@ mod tests {
             .find(|c| c.card.name == "Goblin Raider")
             .expect("tribal:Goblin, carried by 8 deck cards, is a major theme");
         assert_eq!(raider.matched_themes, vec!["tribal:Goblin".to_string()]);
+    }
+
+    #[test]
+    fn the_commander_is_never_a_candidate() {
+        let (grunts, deck_lines) = goblin_grunts(8, "R");
+        let (_dir, db) = CardsFixture::new()
+            .cards([
+                goblin("goblin-commander", "Goblin Warlord", "R").supertypes("Legendary"),
+                forest(),
+            ])
+            .cards(grunts)
+            .build();
+        let input = format!("Commander\n1 Goblin Warlord\n\nDeck\n91 Forest\n{deck_lines}");
+        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
+
+        assert!(
+            !result
+                .candidates
+                .iter()
+                .any(|c| c.card.name == "Goblin Warlord"),
+            "the Commander matches the major tribal:Goblin theme but is already in the Deck"
+        );
     }
 
     #[test]
