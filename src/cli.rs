@@ -46,7 +46,7 @@ pub enum Command {
         offline: bool,
     },
     /// Génère le Rapport d'analyse HTML à partir du JSON de `kb analyze`
-    /// enrichi par Claude (verdict, Suggestions retenues)
+    /// enrichi (verdict, Suggestions retenues)
     Report {
         /// Chemin du fichier JSON enrichi
         json_path: String,

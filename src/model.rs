@@ -165,7 +165,7 @@ impl Card {
     }
 }
 
-/// Forme JSON d'une Carte (contrat avec Claude, ADR 0001) : les champs de
+/// Forme JSON d'une Carte (contrat de sortie de `kb`, ADR 0001) : les champs de
 /// premier niveau restent ceux de la Face principale, `faces` n'apparaît que
 /// pour une Carte multi-face.
 #[derive(Serialize, Deserialize)]
@@ -422,7 +422,8 @@ pub struct Verdict {
     pub priorities: Vec<String>,
 }
 
-/// Le JSON de `kb analyze` enrichi par Claude, entrée de `kb report`.
+/// Le JSON de `kb analyze` enrichi du Verdict et des Suggestions, entrée de
+/// `kb report`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EnrichedAnalysis {
     #[serde(flatten)]
