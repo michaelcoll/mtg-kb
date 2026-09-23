@@ -8,7 +8,7 @@ use super::resolve_and_filter;
 use crate::analyze::ranking::sort_desc_by_score_then_name;
 use crate::db::cards::CardsDb;
 use crate::deck_context::DeckContext;
-use crate::model::{AnalyzeResult, RecommanderRecommendation};
+use crate::model::RecommanderRecommendation;
 
 const RECOMMANDER_URL: &str =
     "https://api.recommander.cards/public-release/api/decks/recommend/top";
@@ -33,17 +33,11 @@ impl RecommanderClient for HttpRecommanderClient {
     }
 }
 
-pub(super) fn request_body(analysis: &AnalyzeResult) -> serde_json::Value {
-    let deck: Vec<String> = analysis
-        .cards
-        .iter()
-        .filter(|c| !c.card.is_basic_land())
-        .map(|c| c.card.name.clone())
-        .collect();
+pub(super) fn request_body(deck: &DeckContext) -> serde_json::Value {
     serde_json::json!({
         "card_format": "name",
-        "commander": analysis.commander.name,
-        "deck": deck,
+        "commander": deck.commander_name(),
+        "deck": deck.names_without_basic_lands(),
     })
 }
 
@@ -84,11 +78,10 @@ fn parse(raw_json: &str) -> Result<Vec<(String, f64)>> {
 /// Recommander, pas une erreur).
 pub fn fetch_and_filter(
     client: &dyn RecommanderClient,
-    analysis: &AnalyzeResult,
     db: &CardsDb,
     deck: &DeckContext,
 ) -> Result<(Vec<RecommanderRecommendation>, Vec<String>)> {
-    let body = request_body(analysis);
+    let body = request_body(deck);
     let raw_json = client.fetch(&body)?;
     let items = parse(&raw_json)?;
 
@@ -116,56 +109,21 @@ mod tests {
             .build()
     }
 
-    fn sample_analysis() -> AnalyzeResult {
+    /// Commandant vert, un Forest et une Carte non-terrain.
+    fn sample_deck() -> DeckContext {
         let forest = Card::from_face(Face {
             name: "Forest".to_string(),
             types: vec!["Land".to_string()],
             supertypes: vec!["Basic".to_string()],
             ..Face::default()
         });
-        AnalyzeResult {
-            commander: Card::named("Test Commander", &["G"]),
-            cards: vec![
-                ResolvedCard {
-                    quantity: 1,
-                    roles: vec![],
-                    themes: vec![],
-                    card: forest,
-                },
-                ResolvedCard {
-                    quantity: 1,
-                    roles: vec![],
-                    themes: vec![],
-                    card: Card::named("Some Nonland Card", &["G"]),
-                },
-            ],
-            unresolved: vec![],
-            card_count: 100,
-            construction_errors: vec![],
-            mana_curve: ManaCurve {
-                buckets: vec![],
-                average_mana_value: 0.0,
-            },
-            mana_base: ManaBase {
-                land_count: 1,
-                sources_by_color: Default::default(),
-                symbols_by_color: Default::default(),
-            },
-            role_counts: Default::default(),
-            weaknesses: vec![],
-            synergies: vec![],
-            candidates: vec![],
-            edhrec_recommendations: vec![],
-            edhrec_unresolved_names: vec![],
-            recommander_recommendations: vec![],
-            recommander_unresolved_names: vec![],
-            source_errors: vec![],
-        }
+        let nonland = Card::named("Some Nonland Card", &["G"]);
+        DeckContext::new(&Card::named("Test Commander", &["G"]), [&forest, &nonland])
     }
 
     #[test]
     fn request_body_omits_basic_lands_and_partner() {
-        let body = request_body(&sample_analysis());
+        let body = request_body(&sample_deck());
         assert_eq!(body["commander"], "Test Commander");
         assert_eq!(body["card_format"], "name");
         assert_eq!(body["deck"], serde_json::json!(["Some Nonland Card"]));
@@ -193,14 +151,7 @@ mod tests {
         })
         .to_string();
         let client = StubClient(raw);
-        let analysis = sample_analysis();
-        let (recommendations, unresolved) = fetch_and_filter(
-            &client,
-            &analysis,
-            &db,
-            &DeckContext::from_analysis(&analysis),
-        )
-        .unwrap();
+        let (recommendations, unresolved) = fetch_and_filter(&client, &db, &sample_deck()).unwrap();
 
         let names: Vec<&str> = recommendations
             .iter()
@@ -219,14 +170,7 @@ mod tests {
         let (_dir, db) = fixture_db();
         let raw = serde_json::json!({"data": {"recommendations": []}}).to_string();
         let client = StubClient(raw);
-        let analysis = sample_analysis();
-        let (recommendations, unresolved) = fetch_and_filter(
-            &client,
-            &analysis,
-            &db,
-            &DeckContext::from_analysis(&analysis),
-        )
-        .unwrap();
+        let (recommendations, unresolved) = fetch_and_filter(&client, &db, &sample_deck()).unwrap();
         assert!(recommendations.is_empty());
         assert!(unresolved.is_empty());
     }

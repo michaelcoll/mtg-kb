@@ -13,7 +13,7 @@ use super::{cache, resolve_and_filter};
 use crate::analyze::ranking::sort_desc_by_score_then_name;
 use crate::db::cards::CardsDb;
 use crate::deck_context::DeckContext;
-use crate::model::{AnalyzeResult, EdhrecRecommendation};
+use crate::model::EdhrecRecommendation;
 
 pub trait EdhrecClient {
     fn fetch(&self, slug: &str) -> Result<String>;
@@ -130,11 +130,10 @@ pub fn fetch_and_filter(
     client: &dyn EdhrecClient,
     cache_dir: &Path,
     ttl: Duration,
-    analysis: &AnalyzeResult,
     db: &CardsDb,
     deck: &DeckContext,
 ) -> Result<(Vec<EdhrecRecommendation>, Vec<String>)> {
-    let commander_slug = slug(&analysis.commander.name);
+    let commander_slug = slug(deck.commander_name());
     let raw_json = cache::cached_fetch(client, cache_dir, &commander_slug, ttl)?;
     let items = parse(&raw_json)?;
 
@@ -233,56 +232,60 @@ mod tests {
         }
     }
 
-    fn fixture_db_and_analysis() -> (tempfile::TempDir, CardsDb, AnalyzeResult) {
+    fn fixture_db() -> (tempfile::TempDir, CardsDb) {
         use crate::db::fixture::{CardsFixture, FixtureCard};
-        let (dir, db) = CardsFixture::new()
+        CardsFixture::new()
             .cards([
                 FixtureCard::new("rampant", "Rampant Growth").identity("G"),
                 FixtureCard::new("solring", "Sol Ring"),
             ])
-            .build();
+            .build()
+    }
 
-        use crate::model::*;
-        let analysis = AnalyzeResult {
-            commander: Card::named("Test Commander", &["G"]),
-            cards: vec![],
-            unresolved: vec![],
-            card_count: 100,
-            construction_errors: vec![],
-            mana_curve: ManaCurve {
-                buckets: vec![],
-                average_mana_value: 0.0,
-            },
-            mana_base: ManaBase {
-                land_count: 37,
-                sources_by_color: Default::default(),
-                symbols_by_color: Default::default(),
-            },
-            role_counts: Default::default(),
-            weaknesses: vec![],
-            synergies: vec![],
-            candidates: vec![],
-            edhrec_recommendations: vec![],
-            edhrec_unresolved_names: vec![],
-            recommander_recommendations: vec![],
-            recommander_unresolved_names: vec![],
-            source_errors: vec![],
+    /// Enregistre le slug demandé : il vient du nom du Commandant.
+    struct RecordingClient {
+        json: String,
+        slugs: std::cell::RefCell<Vec<String>>,
+    }
+    impl EdhrecClient for RecordingClient {
+        fn fetch(&self, slug: &str) -> Result<String> {
+            self.slugs.borrow_mut().push(slug.to_string());
+            Ok(self.json.clone())
+        }
+    }
+
+    #[test]
+    fn fetch_and_filter_queries_the_commander_slug() {
+        let (_dir, db) = fixture_db();
+        let client = RecordingClient {
+            json: sample_json(),
+            slugs: Default::default(),
         };
-        (dir, db, analysis)
+        let cache_dir = tempfile::tempdir().unwrap();
+        let commander = crate::model::Card::named("Krenko, Mob Boss", &["R"]);
+        fetch_and_filter(
+            &client,
+            cache_dir.path(),
+            Duration::from_secs(7 * 86400),
+            &db,
+            &DeckContext::new(&commander, []),
+        )
+        .unwrap();
+        assert_eq!(*client.slugs.borrow(), vec!["krenko-mob-boss".to_string()]);
     }
 
     #[test]
     fn fetch_and_filter_keeps_in_identity_cards_and_lists_unresolved_names() {
-        let (_dir, db, analysis) = fixture_db_and_analysis();
+        let (_dir, db) = fixture_db();
         let client = StubClient(sample_json());
         let cache_dir = tempfile::tempdir().unwrap();
+        let commander = crate::model::Card::named("Test Commander", &["G"]);
         let (recommendations, unresolved) = fetch_and_filter(
             &client,
             cache_dir.path(),
             Duration::from_secs(7 * 86400),
-            &analysis,
             &db,
-            &DeckContext::from_analysis(&analysis),
+            &DeckContext::new(&commander, []),
         )
         .unwrap();
 

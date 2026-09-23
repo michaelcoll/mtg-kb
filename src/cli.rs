@@ -1,5 +1,6 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
+use crate::analyze::metrics::Thresholds;
 use crate::db::overrides::CorrectionField;
 use crate::output::Format;
 
@@ -17,29 +18,8 @@ pub enum Command {
     Analyze {
         /// Chemin du fichier, ou "-" pour lire depuis l'entrée standard
         source: String,
-        /// Nombre minimal de terrains attendu
-        #[arg(long, default_value_t = 35)]
-        min_lands: u32,
-        /// Nombre minimal de Cartes de Rôle "ramp" attendu
-        #[arg(long, default_value_t = 10)]
-        min_ramp: u32,
-        /// Nombre minimal de Cartes de Rôle "pioche" attendu
-        #[arg(long, default_value_t = 8)]
-        min_draw: u32,
-        /// Nombre minimal de Cartes de Rôle "removal_cible" attendu
-        #[arg(long, default_value_t = 8)]
-        min_removal: u32,
-        /// Nombre minimal de Cartes de Rôle "wipe" attendu
-        #[arg(long, default_value_t = 2)]
-        min_wipe: u32,
-        /// Mana value moyenne (hors terrains) au-delà de laquelle la courbe
-        /// est jugée trop chère
-        #[arg(long, default_value_t = 3.5)]
-        max_average_mana_value: f64,
-        /// Nombre de Cartes à mana value ≥ 6 au-delà duquel la courbe est
-        /// jugée déséquilibrée vers le haut
-        #[arg(long, default_value_t = 8)]
-        max_high_cost_cards: u32,
+        #[command(flatten)]
+        thresholds: Thresholds,
         /// Désactive les appels aux Sources externes (EDHREC, Recommander) :
         /// utile pour les tests ou un usage hors ligne
         #[arg(long, default_value_t = false)]
@@ -58,51 +38,7 @@ pub enum Command {
         format: Format,
     },
     /// Recherche des Cartes par filtres combinés
-    Search {
-        /// Nom (recherche partielle)
-        #[arg(long)]
-        name: Option<String>,
-        /// Sous-chaîne de la ligne de type (ex. "Creature", "Legendary")
-        #[arg(long = "type")]
-        type_contains: Option<String>,
-        /// Sous-chaîne des sous-types (ex. "Elf", "Equipment")
-        #[arg(long = "subtype")]
-        subtype_contains: Option<String>,
-        /// Sous-chaîne du texte oracle (répétable, combiné en ET)
-        #[arg(long)]
-        text: Vec<String>,
-        /// Identité de couleur autorisée, ex. "WU" : la Carte doit y être incluse
-        #[arg(long = "color-identity")]
-        color_identity: Option<String>,
-        /// Format de légalité requis (ex. commander, standard)
-        #[arg(long = "legal-in")]
-        legal_in: Option<String>,
-        /// Mana value exacte
-        #[arg(long = "mana-value")]
-        mana_value: Option<f64>,
-        /// Mana value minimale (borne incluse)
-        #[arg(long = "mana-value-min")]
-        mana_value_min: Option<f64>,
-        /// Mana value maximale (borne incluse)
-        #[arg(long = "mana-value-max")]
-        mana_value_max: Option<f64>,
-        /// Rôle détecté requis (même détection que `kb analyze`), répétable,
-        /// combiné en ET
-        #[arg(long = "role")]
-        role: Vec<String>,
-        /// Thème détecté requis (même détection que `kb analyze`), répétable,
-        /// combiné en ET
-        #[arg(long = "theme")]
-        theme: Vec<String>,
-        /// Exclut les Cartes présentes dans cette Decklist (même parsing que
-        /// `kb analyze`) ; fichier, ou "-" pour lire depuis l'entrée standard
-        #[arg(long = "exclude-deck")]
-        exclude_deck: Option<String>,
-        #[arg(long, default_value_t = 50)]
-        limit: usize,
-        #[arg(long, value_enum, default_value_t = Format::Json)]
-        format: Format,
-    },
+    Search(SearchArgs),
     /// Affiche les informations d'un Set par son code
     Set {
         code: String,
@@ -161,6 +97,53 @@ pub enum OverrideAction {
         /// Nom de la Carte (nom oracle ou de sa Face principale)
         card: String,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Args)]
+pub struct SearchArgs {
+    /// Nom (recherche partielle)
+    #[arg(long)]
+    pub name: Option<String>,
+    /// Sous-chaîne de la ligne de type (ex. "Creature", "Legendary")
+    #[arg(long = "type")]
+    pub type_contains: Option<String>,
+    /// Sous-chaîne des sous-types (ex. "Elf", "Equipment")
+    #[arg(long = "subtype")]
+    pub subtype_contains: Option<String>,
+    /// Sous-chaîne du texte oracle (répétable, combiné en ET)
+    #[arg(long)]
+    pub text: Vec<String>,
+    /// Identité de couleur autorisée, ex. "WU" : la Carte doit y être incluse
+    #[arg(long = "color-identity")]
+    pub color_identity: Option<String>,
+    /// Format de légalité requis (ex. commander, standard)
+    #[arg(long = "legal-in")]
+    pub legal_in: Option<String>,
+    /// Mana value exacte
+    #[arg(long = "mana-value")]
+    pub mana_value: Option<f64>,
+    /// Mana value minimale (borne incluse)
+    #[arg(long = "mana-value-min")]
+    pub mana_value_min: Option<f64>,
+    /// Mana value maximale (borne incluse)
+    #[arg(long = "mana-value-max")]
+    pub mana_value_max: Option<f64>,
+    /// Rôle détecté requis (même détection que `kb analyze`), répétable,
+    /// combiné en ET
+    #[arg(long = "role")]
+    pub role: Vec<String>,
+    /// Thème détecté requis (même détection que `kb analyze`), répétable,
+    /// combiné en ET
+    #[arg(long = "theme")]
+    pub theme: Vec<String>,
+    /// Exclut les Cartes présentes dans cette Decklist (même parsing que
+    /// `kb analyze`) ; fichier, ou "-" pour lire depuis l'entrée standard
+    #[arg(long = "exclude-deck")]
+    pub exclude_deck: Option<String>,
+    #[arg(long, default_value_t = 50)]
+    pub limit: usize,
+    #[arg(long, value_enum, default_value_t = Format::Json)]
+    pub format: Format,
 }
 
 #[derive(Args)]
@@ -226,6 +209,50 @@ mod tests {
 
     fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
         Cli::try_parse_from(std::iter::once("kb").chain(args.iter().copied()))
+    }
+
+    fn analyze_thresholds(args: &[&str]) -> Thresholds {
+        match parse(args).unwrap().command {
+            Command::Analyze { thresholds, .. } => thresholds,
+            _ => panic!("kb analyze attendu"),
+        }
+    }
+
+    #[test]
+    fn analyze_threshold_defaults_are_the_domain_defaults() {
+        assert_eq!(
+            analyze_thresholds(&["analyze", "deck.txt"]),
+            Thresholds::default()
+        );
+    }
+
+    #[test]
+    fn analyze_threshold_options_override_the_defaults() {
+        assert_eq!(
+            analyze_thresholds(&[
+                "analyze",
+                "deck.txt",
+                "--min-lands",
+                "30",
+                "--max-average-mana-value",
+                "2.5",
+            ]),
+            Thresholds {
+                min_lands: 30,
+                max_average_mana_value: 2.5,
+                ..Thresholds::default()
+            }
+        );
+    }
+
+    #[test]
+    fn search_args_default_limit_and_format() {
+        let Command::Search(args) = parse(&["search"]).unwrap().command else {
+            panic!("kb search attendu");
+        };
+        assert_eq!(args.limit, 50);
+        assert_eq!(args.format, Format::Json);
+        assert!(args.role.is_empty() && args.exclude_deck.is_none());
     }
 
     #[test]

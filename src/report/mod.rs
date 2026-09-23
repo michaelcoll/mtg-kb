@@ -618,7 +618,7 @@ pub fn render(model: &ReportModel) -> String {
         model.commander_printing.as_ref(),
     ));
     let verdict = trimmed_with_newline(render_verdict_section(&model.verdict));
-    let source_errors = render_source_errors_section(&a.source_errors);
+    let source_errors = render_source_errors_section(&a.external.source_errors);
     let source_errors = if source_errors.is_empty() {
         String::new()
     } else {
@@ -636,8 +636,8 @@ pub fn render(model: &ReportModel) -> String {
         .map(|s| s.card_name.as_str())
         .collect();
     let appendix = trimmed_with_newline(render_external_appendix_section(
-        &a.edhrec_recommendations,
-        &a.recommander_recommendations,
+        &a.external.edhrec_recommendations,
+        &a.external.recommander_recommendations,
         &suggestion_names,
         card_printings,
     ));
@@ -686,11 +686,7 @@ mod tests {
                     cards: vec!["Krenko, Mob Boss".to_string()],
                 }],
                 candidates: vec![],
-                edhrec_recommendations: vec![],
-                edhrec_unresolved_names: vec![],
-                recommander_recommendations: vec![],
-                recommander_unresolved_names: vec![],
-                source_errors: vec![],
+                external: ExternalSources::default(),
             },
             verdict: Verdict {
                 summary: "Solide, manque de ramp".to_string(),
@@ -899,7 +895,7 @@ mod tests {
     #[test]
     fn renders_a_warning_section_when_a_source_failed() {
         let mut enriched = sample();
-        enriched.analysis.source_errors = vec![SourceError {
+        enriched.analysis.external.source_errors = vec![SourceError {
             source: "edhrec".to_string(),
             message: "HTTP 429".to_string(),
         }];
@@ -919,7 +915,7 @@ mod tests {
     #[test]
     fn appendix_lists_external_recommendations_not_turned_into_suggestions() {
         let mut enriched = sample();
-        enriched.analysis.edhrec_recommendations = vec![EdhrecRecommendation {
+        enriched.analysis.external.edhrec_recommendations = vec![EdhrecRecommendation {
             card: Card::named("Sol Ring", &[]),
             synergy: 0.42,
             inclusion_rate: 0.9,
@@ -934,7 +930,7 @@ mod tests {
     #[test]
     fn appendix_excludes_external_recommendations_already_turned_into_suggestions() {
         let mut enriched = sample();
-        enriched.analysis.edhrec_recommendations = vec![EdhrecRecommendation {
+        enriched.analysis.external.edhrec_recommendations = vec![EdhrecRecommendation {
             card: Card::named("Rampant Growth", &[]),
             synergy: 0.42,
             inclusion_rate: 0.9,
@@ -1027,7 +1023,7 @@ mod tests {
     #[test]
     fn appendix_card_with_known_printing_becomes_a_hover_link() {
         let mut enriched = sample();
-        enriched.analysis.edhrec_recommendations = vec![EdhrecRecommendation {
+        enriched.analysis.external.edhrec_recommendations = vec![EdhrecRecommendation {
             card: Card::named("Sol Ring", &[]),
             synergy: 0.42,
             inclusion_rate: 0.9,
