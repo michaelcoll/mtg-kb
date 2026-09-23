@@ -1,10 +1,16 @@
-use crate::db::cards::CardsDb;
+use anyhow::Result;
+
+use super::PrintingLookup;
 use crate::deck_context::{DeckContext, Ineligible};
 use crate::model::EnrichedAnalysis;
 
 /// Par Suggestion : Carte inconnue, sinon première règle d'éligibilité
-/// enfreinte, plus une Carte à retirer absente du Deck.
-pub fn validate_suggestions(enriched: &EnrichedAnalysis, cards_db: &CardsDb) -> Vec<String> {
+/// enfreinte, plus une Carte à retirer absente du Deck. Une erreur de la Base
+/// cartes n'est pas une violation : elle est propagée.
+pub(super) fn validate_suggestions(
+    enriched: &EnrichedAnalysis,
+    lookup: &dyn PrintingLookup,
+) -> Result<Vec<String>> {
     let deck = DeckContext::from_analysis(&enriched.analysis);
 
     let mut violations = Vec::new();
@@ -15,20 +21,9 @@ pub fn validate_suggestions(enriched: &EnrichedAnalysis, cards_db: &CardsDb) -> 
     for suggestion in &enriched.suggestions {
         let name = suggestion.card_name.as_str();
 
-        let card = match cards_db.card(name) {
-            Ok(Some(card)) => card,
-            Ok(None) => {
-                push(&mut violations, name, "Carte inconnue.");
-                continue;
-            }
-            Err(e) => {
-                push(
-                    &mut violations,
-                    name,
-                    &format!("erreur lors de la résolution de la Carte ({e})."),
-                );
-                continue;
-            }
+        let Some(card) = lookup.card(name)? else {
+            push(&mut violations, name, "Carte inconnue.");
+            continue;
         };
 
         if let Err(ineligible) = deck.eligibility(&card) {
@@ -51,12 +46,13 @@ pub fn validate_suggestions(enriched: &EnrichedAnalysis, cards_db: &CardsDb) -> 
         }
     }
 
-    violations
+    Ok(violations)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::cards::CardsDb;
     use crate::db::fixture::{CardsFixture, FixtureCard};
     use crate::model::*;
     use std::collections::BTreeMap;
@@ -125,7 +121,7 @@ mod tests {
             justification: "Comble le manque de ramp".to_string(),
             card_to_remove: None,
         }]);
-        assert!(validate_suggestions(&enriched, &db).is_empty());
+        assert!(validate_suggestions(&enriched, &db).unwrap().is_empty());
     }
 
     #[test]
@@ -136,7 +132,7 @@ mod tests {
             justification: "Comble le manque de ramp".to_string(),
             card_to_remove: Some("Llanowar Elves".to_string()),
         }]);
-        assert!(validate_suggestions(&enriched, &db).is_empty());
+        assert!(validate_suggestions(&enriched, &db).unwrap().is_empty());
     }
 
     #[test]
@@ -147,7 +143,7 @@ mod tests {
             justification: "Comble le manque de ramp".to_string(),
             card_to_remove: Some("Sol Ring".to_string()),
         }]);
-        let violations = validate_suggestions(&enriched, &db);
+        let violations = validate_suggestions(&enriched, &db).unwrap();
         assert_eq!(violations.len(), 1);
         assert!(violations[0].contains("Sol Ring"));
         assert!(violations[0].contains("absente du Deck"));
@@ -161,7 +157,7 @@ mod tests {
             justification: "N'existe pas".to_string(),
             card_to_remove: None,
         }]);
-        let violations = validate_suggestions(&enriched, &db);
+        let violations = validate_suggestions(&enriched, &db).unwrap();
         assert_eq!(violations.len(), 1);
         assert!(violations[0].contains("Not A Real Card"));
         assert!(violations[0].contains("inconnue"));
@@ -175,7 +171,7 @@ mod tests {
             justification: "Trop puissante".to_string(),
             card_to_remove: None,
         }]);
-        let violations = validate_suggestions(&enriched, &db);
+        let violations = validate_suggestions(&enriched, &db).unwrap();
         assert_eq!(violations.len(), 1);
         assert!(violations[0].contains("Channel"));
         assert!(violations[0].contains("légale"));
@@ -189,7 +185,7 @@ mod tests {
             justification: "Removal".to_string(),
             card_to_remove: None,
         }]);
-        let violations = validate_suggestions(&enriched, &db);
+        let violations = validate_suggestions(&enriched, &db).unwrap();
         assert_eq!(violations.len(), 1);
         assert!(violations[0].contains("Lightning Bolt"));
         assert!(violations[0].contains("Identité de couleur"));
@@ -204,7 +200,7 @@ mod tests {
             card_to_remove: None,
         }]);
         enriched.analysis.commander = Card::named("Atraxa, Praetors' Voice", &["b", "g", "u", "w"]);
-        assert!(validate_suggestions(&enriched, &db).is_empty());
+        assert!(validate_suggestions(&enriched, &db).unwrap().is_empty());
     }
 
     #[test]
@@ -215,7 +211,7 @@ mod tests {
             justification: "Ramp".to_string(),
             card_to_remove: None,
         }]);
-        let violations = validate_suggestions(&enriched, &db);
+        let violations = validate_suggestions(&enriched, &db).unwrap();
         assert_eq!(violations.len(), 1);
         assert!(violations[0].contains("Llanowar Elves"));
         assert!(violations[0].contains("déjà présente"));
@@ -229,7 +225,7 @@ mod tests {
             justification: "?".to_string(),
             card_to_remove: None,
         }]);
-        let violations = validate_suggestions(&enriched, &db);
+        let violations = validate_suggestions(&enriched, &db).unwrap();
         assert_eq!(violations.len(), 1);
         assert!(violations[0].contains("déjà présente"));
     }
@@ -249,7 +245,7 @@ mod tests {
                 card_to_remove: None,
             },
         ]);
-        let violations = validate_suggestions(&enriched, &db);
+        let violations = validate_suggestions(&enriched, &db).unwrap();
         assert_eq!(violations.len(), 2);
     }
 }
