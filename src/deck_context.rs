@@ -4,31 +4,7 @@
 
 use std::collections::HashSet;
 
-use crate::model::{AnalyzeResult, Card};
-
-/// Identité de couleur, en majuscules par construction.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ColorIdentity(Vec<String>);
-
-impl ColorIdentity {
-    pub fn new(colors: &[String]) -> Self {
-        Self(colors.iter().map(|c| c.to_ascii_uppercase()).collect())
-    }
-
-    /// Une lettre par couleur, ex. `"BG"`.
-    pub fn from_letters(letters: &str) -> Self {
-        Self(
-            letters
-                .chars()
-                .map(|c| c.to_ascii_uppercase().to_string())
-                .collect(),
-        )
-    }
-
-    pub fn is_subset_of(&self, other: &ColorIdentity) -> bool {
-        self.0.iter().all(|c| other.0.contains(c))
-    }
-}
+use crate::model::{AnalyzeResult, Card, ColorIdentity};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ineligible {
@@ -50,7 +26,7 @@ impl DeckContext {
             .map(|card| card.name.clone())
             .collect();
         Self {
-            commander_identity: ColorIdentity::new(&commander.color_identity),
+            commander_identity: commander.identity(),
             names,
         }
     }
@@ -59,10 +35,12 @@ impl DeckContext {
         Self::new(&analysis.commander, analysis.cards.iter().map(|c| &c.card))
     }
 
+    /// Commandant compris.
     pub fn contains(&self, name: &str) -> bool {
         self.names.contains(name)
     }
 
+    /// Première règle enfreinte : légalité, Identité de couleur, absence du Deck.
     pub fn eligibility(&self, card: &Card) -> Result<(), Ineligible> {
         if !card.legal_in_commander {
             return Err(Ineligible::Illegal);
@@ -81,7 +59,7 @@ impl DeckContext {
     }
 
     pub fn is_within_identity(&self, card: &Card) -> bool {
-        ColorIdentity::new(&card.color_identity).is_subset_of(&self.commander_identity)
+        card.identity().is_subset_of(&self.commander_identity)
     }
 }
 
