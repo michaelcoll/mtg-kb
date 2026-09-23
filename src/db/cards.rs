@@ -4,9 +4,9 @@ use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, Row};
 
 use crate::db::overrides::Corrections;
-use crate::deck_context::ColorIdentity;
 use crate::model::{
-    Card, CardCorrections, Face, Layout, ReferencePrinting, Ruling, SetInfo, split_csv_field,
+    Card, CardCorrections, ColorIdentity, Face, Layout, ReferencePrinting, Ruling, SetInfo,
+    split_csv_field,
 };
 
 /// Whitelist : le nom de colonne est injecté tel quel dans le SQL.
@@ -330,9 +330,7 @@ impl CardsDb {
                 filters
                     .color_identity_subset_of
                     .as_ref()
-                    .is_none_or(|allowed| {
-                        ColorIdentity::new(&card.color_identity).is_subset_of(allowed)
-                    })
+                    .is_none_or(|allowed| card.identity().is_subset_of(allowed))
             })
             .collect();
         if filters.limit > 0 {

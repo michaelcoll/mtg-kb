@@ -2,7 +2,8 @@ use crate::db::cards::CardsDb;
 use crate::deck_context::{DeckContext, Ineligible};
 use crate::model::EnrichedAnalysis;
 
-/// Un message par violation (existence, éligibilité, Carte à retirer).
+/// Par Suggestion : Carte inconnue, sinon première règle d'éligibilité
+/// enfreinte, plus une Carte à retirer absente du Deck.
 pub fn validate_suggestions(enriched: &EnrichedAnalysis, cards_db: &CardsDb) -> Vec<String> {
     let deck = DeckContext::from_analysis(&enriched.analysis);
 

@@ -6,9 +6,8 @@ use anyhow::{Context, Result};
 use crate::analyze::metrics::detect_roles;
 use crate::analyze::themes::detect_themes;
 use crate::db::cards::{CardsDb, SearchFilters};
-use crate::deck_context::ColorIdentity;
 use crate::decklist::parser;
-use crate::model::Card;
+use crate::model::{Card, ColorIdentity};
 use crate::output::{Format, print_json};
 
 #[allow(clippy::too_many_arguments)]

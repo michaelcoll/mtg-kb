@@ -98,6 +98,31 @@ impl CardCorrections {
     }
 }
 
+/// Identité de couleur : lettres en majuscules, triées et sans doublon.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColorIdentity(Vec<String>);
+
+impl ColorIdentity {
+    pub fn new<S: AsRef<str>>(colors: impl IntoIterator<Item = S>) -> Self {
+        let mut colors: Vec<String> = colors
+            .into_iter()
+            .map(|c| c.as_ref().to_ascii_uppercase())
+            .collect();
+        colors.sort();
+        colors.dedup();
+        Self(colors)
+    }
+
+    /// Une lettre par couleur, ex. `"BG"`.
+    pub fn from_letters(letters: &str) -> Self {
+        Self::new(letters.chars().map(String::from))
+    }
+
+    pub fn is_subset_of(&self, other: &ColorIdentity) -> bool {
+        self.0.iter().all(|c| other.0.contains(c))
+    }
+}
+
 /// Une Carte et ses Faces (ADR 0004). `mana_value` est celle de la Carte
 /// (celle qui compte hors de la pile), `front.mana_value` celle de la Face.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -123,6 +148,10 @@ impl Card {
     /// Terrain dès qu'une Face l'est (Carte modale sort // terrain).
     pub fn is_land(&self) -> bool {
         self.faces().any(Face::is_land)
+    }
+
+    pub fn identity(&self) -> ColorIdentity {
+        ColorIdentity::new(&self.color_identity)
     }
 
     pub fn is_basic_land(&self) -> bool {
