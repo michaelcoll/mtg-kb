@@ -73,6 +73,10 @@ _Avoid_: Archétype, tag, mécanique
 Un Thème porté par au moins 8 Cartes du Deck ; distingue une stratégie réellement construite d'un Thème tribal accidentel (2-3 Cartes qui partagent un sous-type sans que ce soit voulu). Seuls les Thèmes majeurs alimentent les Candidats.
 _Avoid_: Thème dominant, archétype
 
+**Correction**:
+Une valeur fixée à la main (Rôles, Thèmes ou légalité Commander) pour une Carte, qui remplace ce que `kb` détecte, avec un motif obligatoire. Elle est stockée hors de la Base cartes et s'applique partout où la Carte est lue. Rôles et Thèmes corrigés ne sont pas limités aux valeurs détectables.
+_Avoid_: Override, patch, surcharge
+
 **Synergie**:
 Un Thème partagé par plusieurs Cartes du même Deck.
 _Avoid_: Combo, interaction
