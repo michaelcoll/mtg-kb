@@ -40,6 +40,18 @@ kb update cards
 kb update rules [--url <url>]
 ```
 
+Une troisième base, `overrides.sqlite`, contient les Corrections (voir
+ADR 0005). Elle est créée à la première Correction et `kb update` ne la touche
+jamais :
+
+```sh
+kb override role "Bite Down" removal_cible --reason "bite"
+kb override theme "Drudge Spell" --none --reason "…"
+kb override legality "Sol Ring" banned --reason "…"
+kb override list
+kb override remove role "Bite Down"
+```
+
 ## Utiliser le CLI
 
 Interroger la Base cartes et la Base règles :

@@ -33,7 +33,9 @@ renvoient du JSON stable.
     cohérente)
   - `--role <rôle>` : Rôle détecté (même détection que `kb analyze` :
     `ramp`, `pioche`, `removal_cible`, `wipe`, `protection`, `terrain`),
-    répétable, combiné en ET
+    répétable, combiné en ET. Une Correction (`kb override`) remplace les
+    Rôles, Thèmes et la légalité Commander détectés, ici comme partout
+    ailleurs
   - `--theme <thème>` : Thème détecté (même détection que `kb analyze` :
     `tokens`, `+1/+1`, `aristocrats`, `tribal:<sous-type>`), répétable,
     combiné en ET

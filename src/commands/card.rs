@@ -1,12 +1,10 @@
 use anyhow::{Result, bail};
 
-use crate::data_dir::cards_db_path;
-use crate::db::cards::CardsDb;
 use crate::model::Card;
 use crate::output::{Format, print_json};
 
 pub fn run(name: &str, format: Format) -> Result<()> {
-    let db = CardsDb::open(&cards_db_path())?;
+    let db = super::open_cards_db()?;
     let Some(card) = db.card(name)? else {
         bail!("Carte introuvable : « {} »", name);
     };

@@ -7,8 +7,12 @@ use crate::model::{Card, Face, ManaBase, ManaCurve, ManaCurveBucket, ResolvedCar
 
 const COLORS: [&str; 5] = ["W", "U", "B", "R", "G"];
 
+/// Une Correction de Rôles remplace la détection (ADR 0005).
 pub fn detect_roles(card: &Card) -> Vec<String> {
-    card.union_over_faces(detect_face_roles)
+    match &card.corrections.roles {
+        Some(roles) => roles.clone(),
+        None => card.union_over_faces(detect_face_roles),
+    }
 }
 
 fn detect_face_roles(face: &Face) -> Vec<String> {
@@ -703,6 +707,23 @@ mod tests {
     fn nonland_card_has_no_terrain_role() {
         let vanilla = card("Grizzly Bears", "", &["Creature"], Some("{1}{G}"));
         assert!(detect_roles(&vanilla).is_empty());
+    }
+
+    #[test]
+    fn a_role_correction_replaces_the_detected_roles() {
+        let mut drudge_spell = card(
+            "Drudge Spell",
+            "Exile two creature cards from your graveyard: Create a 1/1 black Skeleton \
+             creature token. When Drudge Spell leaves the battlefield, destroy all Skeleton \
+             tokens.",
+            &["Enchantment"],
+            None,
+        );
+        assert!(detect_roles(&drudge_spell).contains(&"wipe".to_string()));
+        drudge_spell.corrections.roles = Some(vec![]);
+        assert!(detect_roles(&drudge_spell).is_empty());
+        drudge_spell.corrections.roles = Some(vec!["grave_hate".to_string()]);
+        assert_eq!(detect_roles(&drudge_spell), vec!["grave_hate".to_string()]);
     }
 
     #[test]

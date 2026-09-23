@@ -6,8 +6,12 @@ use crate::model::{Card, Face};
 
 /// Thèmes détectés par motifs sur le texte oracle et les sous-types de
 /// Créature. Tout sous-type de Créature devient un Thème "tribal:<sous-type>".
+/// Une Correction de Thèmes remplace la détection (ADR 0005).
 pub fn detect_themes(card: &Card) -> Vec<String> {
-    card.union_over_faces(detect_face_themes)
+    match &card.corrections.themes {
+        Some(themes) => themes.clone(),
+        None => card.union_over_faces(detect_face_themes),
+    }
 }
 
 fn detect_face_themes(face: &Face) -> Vec<String> {
@@ -117,5 +121,12 @@ mod tests {
     fn noncreature_has_no_tribal_theme() {
         let c = card("Sol Ring", "{T}: Add {C}{C}.", &["Artifact"], &[]);
         assert!(detect_themes(&c).is_empty());
+    }
+
+    #[test]
+    fn a_theme_correction_replaces_the_detected_themes() {
+        let mut c = card("Goblin Chieftain", "", &["Creature"], &["Goblin"]);
+        c.corrections.themes = Some(vec!["tokens".to_string()]);
+        assert_eq!(detect_themes(&c), vec!["tokens".to_string()]);
     }
 }

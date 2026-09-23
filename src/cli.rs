@@ -1,5 +1,6 @@
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
+use crate::db::overrides::CorrectionField;
 use crate::output::Format;
 
 #[derive(Parser)]
@@ -124,6 +125,64 @@ pub enum Command {
         #[command(subcommand)]
         target: Option<UpdateTarget>,
     },
+    /// Corrections manuelles des Rôles, Thèmes et légalité Commander d'une
+    /// Carte (data/overrides.sqlite), appliquées partout où la Carte est lue
+    Override {
+        #[command(subcommand)]
+        action: OverrideAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum OverrideAction {
+    /// Remplace les Rôles détectés d'une Carte
+    Role(LabelsArgs),
+    /// Remplace les Thèmes détectés d'une Carte
+    Theme(LabelsArgs),
+    /// Fixe la légalité Commander d'une Carte
+    Legality {
+        /// Nom de la Carte (nom oracle ou de sa Face principale)
+        card: String,
+        #[arg(value_enum)]
+        value: Legality,
+        /// Motif de la Correction (obligatoire)
+        #[arg(long)]
+        reason: String,
+    },
+    /// Liste les Corrections : Carte, champ, valeur, motif, date
+    List {
+        #[arg(long, value_enum, default_value_t = Format::Json)]
+        format: Format,
+    },
+    /// Retire une Correction : la détection de `kb` s'applique de nouveau
+    Remove {
+        #[arg(value_enum)]
+        field: CorrectionField,
+        /// Nom de la Carte (nom oracle ou de sa Face principale)
+        card: String,
+    },
+}
+
+#[derive(Args)]
+pub struct LabelsArgs {
+    /// Nom de la Carte (nom oracle ou de sa Face principale)
+    pub card: String,
+    /// Liste finale, séparée par des virgules ; remplace entièrement la
+    /// détection. Toute valeur est acceptée, mise en snake_case minuscule
+    #[arg(required_unless_present = "none", conflicts_with = "none")]
+    pub values: Option<String>,
+    /// Fixe une liste vide
+    #[arg(long)]
+    pub none: bool,
+    /// Motif de la Correction (obligatoire)
+    #[arg(long)]
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum Legality {
+    Legal,
+    Banned,
 }
 
 #[derive(Subcommand)]
@@ -159,4 +218,69 @@ pub enum RulesAction {
     /// "define".
     #[command(external_subcommand)]
     Number(Vec<String>),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
+        Cli::try_parse_from(std::iter::once("kb").chain(args.iter().copied()))
+    }
+
+    #[test]
+    fn override_role_requires_a_reason() {
+        assert!(parse(&["override", "role", "Bite Down", "removal_cible"]).is_err());
+        assert!(parse(&["override", "legality", "Bite Down", "banned"]).is_err());
+        assert!(
+            parse(&[
+                "override",
+                "role",
+                "Bite Down",
+                "removal_cible",
+                "--reason",
+                "bite"
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn override_role_takes_values_or_none_but_not_both() {
+        assert!(parse(&["override", "theme", "Bite Down", "--reason", "x"]).is_err());
+        assert!(parse(&["override", "theme", "Bite Down", "--none", "--reason", "x"]).is_ok());
+        assert!(
+            parse(&[
+                "override",
+                "theme",
+                "Bite Down",
+                "tokens",
+                "--none",
+                "--reason",
+                "x"
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn override_legality_accepts_only_legal_or_banned() {
+        assert!(
+            parse(&[
+                "override",
+                "legality",
+                "Sol Ring",
+                "restricted",
+                "--reason",
+                "x"
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn override_list_and_remove_take_no_reason() {
+        assert!(parse(&["override", "list"]).is_ok());
+        assert!(parse(&["override", "remove", "legality", "Sol Ring"]).is_ok());
+    }
 }

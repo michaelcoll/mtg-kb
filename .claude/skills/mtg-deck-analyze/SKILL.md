@@ -69,6 +69,20 @@ déterministe, Claude interprète et juge.
    compréhension de l'effet ; une Carte mal taguée ne doit pas devenir
    une Suggestion.
 
+   **Corrige les Cartes mal classées** (ADR 0005) : quand un Rôle, un
+   Thème ou la légalité Commander d'une Carte du Deck ou des Candidats est
+   faux, pose une Correction plutôt que de compenser à la main :
+   - `kb override role "<Carte>" <v1,v2,…> --reason "<motif>"` (ou
+     `--none`), idem avec `theme` ;
+   - `kb override legality "<Carte>" legal|banned --reason "<motif>"`.
+
+   La liste donnée **remplace** entièrement ce que `kb` détecte : saisis
+   la liste finale complète (ex. un terrain modal qui fight garde
+   `terrain`, soit `terrain,removal_cible`). Les champs corrigés
+   apparaissent dans `overridden` du JSON. Relance ensuite `kb analyze`
+   et repars de ce nouveau JSON. Ne pose une Correction qu'après avoir lu
+   le texte oracle.
+
    Pour chaque Suggestion retenue, rédige une `justification` en une
    phrase et, si pertinent, une Carte à retirer : une Carte du Deck que
    la Suggestion propose de remplacer (`card_to_remove`, facultatif).
@@ -99,6 +113,10 @@ déterministe, Claude interprète et juge.
    contraintes, `kb report` échoue en nommant la Carte et la règle
    violée, sans écrire de rapport : corrige les `suggestions` du JSON
    enrichi et relance, ne contourne pas l'échec.
+
+4. **Compte rendu** — dans ton message de fin d'analyse, liste les
+   Corrections posées pendant cette analyse (Carte, champ, valeur,
+   motif), ou indique qu'aucune n'a été posée.
 
 ## Points d'attention
 

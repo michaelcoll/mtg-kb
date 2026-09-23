@@ -84,6 +84,7 @@ fn main() {
             Some(cli::UpdateTarget::Cards) => commands::update::run_cards(),
             Some(cli::UpdateTarget::Rules { url }) => commands::update_rules::run(url),
         },
+        cli::Command::Override { action } => commands::overrides::run(action),
     };
     if let Err(err) = result {
         eprintln!("erreur: {err:#}");
