@@ -1,55 +1,27 @@
-use std::io::Read;
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use crate::analyze;
+use crate::analyze::external;
 use crate::analyze::external::edhrec::{EdhrecClient, HttpEdhrecClient};
 use crate::analyze::external::recommander::{HttpRecommanderClient, RecommanderClient};
-use crate::analyze::external::{self, ExternalSourcesResult};
 use crate::analyze::metrics::Thresholds;
 use crate::data_dir::edhrec_cache_dir;
 use crate::db::cards::CardsDb;
+use crate::deck_context::DeckContext;
+use crate::decklist;
 use crate::model::AnalyzeResult;
 use crate::output::print_json;
 
-#[allow(clippy::too_many_arguments)]
-pub fn run(
-    source: &str,
-    min_lands: u32,
-    min_ramp: u32,
-    min_draw: u32,
-    min_removal: u32,
-    min_wipe: u32,
-    max_average_mana_value: f64,
-    max_high_cost_cards: u32,
-    offline: bool,
-) -> Result<()> {
-    let input = if source == "-" {
-        let mut buf = String::new();
-        std::io::stdin()
-            .read_to_string(&mut buf)
-            .context("lecture de la Decklist depuis l'entrée standard")?;
-        buf
-    } else {
-        std::fs::read_to_string(source).with_context(|| format!("lecture du fichier {source}"))?
-    };
-
-    let thresholds = Thresholds {
-        min_lands,
-        min_ramp,
-        min_draw,
-        min_removal,
-        min_wipe,
-        max_average_mana_value,
-        max_high_cost_cards,
-    };
+pub fn run(source: &str, thresholds: &Thresholds, offline: bool) -> Result<()> {
+    let input = decklist::read_source(source)?;
 
     let db = super::open_cards_db()?;
     let result = analyze_deck(
         &input,
         &db,
-        &thresholds,
+        thresholds,
         offline,
         &HttpEdhrecClient,
         &HttpRecommanderClient,
@@ -59,7 +31,6 @@ pub fn run(
     print_json(&result)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn analyze_deck(
     input: &str,
     db: &CardsDb,
@@ -72,25 +43,16 @@ fn analyze_deck(
     let mut result = analyze::run(input, db, thresholds)?;
 
     if !offline {
-        let outcome = external::fetch_all(
+        result.external = external::fetch_all(
             db,
-            &result,
+            &DeckContext::from_analysis(&result),
             edhrec_client,
             recommander_client,
             edhrec_cache_dir,
         );
-        merge_external_sources(&mut result, outcome);
     }
 
     Ok(result)
-}
-
-fn merge_external_sources(result: &mut AnalyzeResult, outcome: ExternalSourcesResult) {
-    result.edhrec_recommendations = outcome.edhrec_recommendations;
-    result.edhrec_unresolved_names = outcome.edhrec_unresolved_names;
-    result.recommander_recommendations = outcome.recommander_recommendations;
-    result.recommander_unresolved_names = outcome.recommander_unresolved_names;
-    result.source_errors = outcome.source_errors;
 }
 
 #[cfg(test)]
@@ -149,9 +111,101 @@ mod tests {
         )
         .unwrap();
 
-        assert!(result.edhrec_recommendations.is_empty());
-        assert!(result.recommander_recommendations.is_empty());
-        assert!(result.source_errors.is_empty());
+        assert!(result.external.edhrec_recommendations.is_empty());
+        assert!(result.external.recommander_recommendations.is_empty());
+        assert!(result.external.source_errors.is_empty());
+    }
+
+    /// Les Sources externes restent des clés de premier niveau du JSON, dans
+    /// le même ordre qu'avant leur regroupement dans `ExternalSources`.
+    #[test]
+    fn json_keys_are_flat_and_in_the_documented_order() {
+        let (_dir, db) = fixture_db();
+        let cache_dir = tempfile::tempdir().unwrap();
+        let result = analyze_deck(
+            &deck_input(),
+            &db,
+            &Thresholds::default(),
+            true,
+            &PanicIfCalledEdhrecClient,
+            &PanicIfCalledRecommanderClient,
+            cache_dir.path(),
+        )
+        .unwrap();
+
+        let json = serde_json::to_string(&result).unwrap();
+        assert_eq!(
+            top_level_keys_in_order(&json),
+            vec![
+                "commander",
+                "cards",
+                "unresolved",
+                "card_count",
+                "construction_errors",
+                "mana_curve",
+                "mana_base",
+                "role_counts",
+                "weaknesses",
+                "synergies",
+                "candidates",
+                "edhrec_recommendations",
+                "edhrec_unresolved_names",
+                "recommander_recommendations",
+                "recommander_unresolved_names",
+                "source_errors",
+            ]
+        );
+        let round_trip: AnalyzeResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(round_trip, result);
+    }
+
+    /// `serde_json::Value` trie les clés : on lit l'objet en flux pour garder
+    /// l'ordre d'écriture.
+    fn top_level_keys_in_order(json: &str) -> Vec<String> {
+        struct Keys(Vec<String>);
+        impl<'de> serde::Deserialize<'de> for Keys {
+            fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+                struct Visitor;
+                impl<'de> serde::de::Visitor<'de> for Visitor {
+                    type Value = Keys;
+                    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                        f.write_str("un objet JSON")
+                    }
+                    fn visit_map<A: serde::de::MapAccess<'de>>(
+                        self,
+                        mut map: A,
+                    ) -> Result<Keys, A::Error> {
+                        let mut keys = Vec::new();
+                        while let Some(key) = map.next_key::<String>()? {
+                            map.next_value::<serde::de::IgnoredAny>()?;
+                            keys.push(key);
+                        }
+                        Ok(Keys(keys))
+                    }
+                }
+                d.deserialize_map(Visitor)
+            }
+        }
+        serde_json::from_str::<Keys>(json).unwrap().0
+    }
+
+    #[test]
+    fn a_json_without_external_source_keys_still_parses() {
+        let (_dir, db) = fixture_db();
+        let result = analyze::run(&deck_input(), &db, &Thresholds::default()).unwrap();
+        let mut json = serde_json::to_value(&result).unwrap();
+        let object = json.as_object_mut().unwrap();
+        for key in [
+            "edhrec_recommendations",
+            "edhrec_unresolved_names",
+            "recommander_recommendations",
+            "recommander_unresolved_names",
+            "source_errors",
+        ] {
+            object.remove(key);
+        }
+        let parsed: AnalyzeResult = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed, result);
     }
 
     struct StubEdhrecClient(String);
@@ -196,9 +250,9 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(result.edhrec_recommendations.len(), 1);
-        assert_eq!(result.recommander_recommendations.len(), 1);
-        assert!(result.source_errors.is_empty());
+        assert_eq!(result.external.edhrec_recommendations.len(), 1);
+        assert_eq!(result.external.recommander_recommendations.len(), 1);
+        assert!(result.external.source_errors.is_empty());
     }
 
     #[test]
@@ -229,8 +283,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(result.source_errors.len(), 2);
-        assert!(result.edhrec_recommendations.is_empty());
-        assert!(result.recommander_recommendations.is_empty());
+        assert_eq!(result.external.source_errors.len(), 2);
+        assert!(result.external.edhrec_recommendations.is_empty());
+        assert!(result.external.recommander_recommendations.is_empty());
     }
 }

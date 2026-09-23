@@ -420,15 +420,21 @@ pub struct AnalyzeResult {
     pub weaknesses: Vec<String>,
     pub synergies: Vec<Synergy>,
     pub candidates: Vec<Candidate>,
-    #[serde(default)]
+    /// Vides en `--offline` ; aplaties dans le JSON (mêmes clés qu'à plat).
+    #[serde(flatten)]
+    pub external: ExternalSources,
+}
+
+/// Recommandations externes filtrées d'EDHREC et Recommander, et échecs des
+/// Sources externes (ADR 0003 : une Source en échec n'interrompt pas
+/// l'analyse).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct ExternalSources {
     pub edhrec_recommendations: Vec<EdhrecRecommendation>,
-    #[serde(default)]
     pub edhrec_unresolved_names: Vec<String>,
-    #[serde(default)]
     pub recommander_recommendations: Vec<RecommanderRecommendation>,
-    #[serde(default)]
     pub recommander_unresolved_names: Vec<String>,
-    #[serde(default)]
     pub source_errors: Vec<SourceError>,
 }
 

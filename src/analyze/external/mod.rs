@@ -11,44 +11,25 @@ use anyhow::Result;
 
 use crate::db::cards::CardsDb;
 use crate::deck_context::DeckContext;
-use crate::model::{
-    AnalyzeResult, Card, EdhrecRecommendation, RecommanderRecommendation, SourceError,
-};
+use crate::model::{Card, ExternalSources, SourceError};
 
 pub const MAX_RECOMMENDATIONS_PER_SOURCE: usize = 30;
 
 pub const EDHREC_CACHE_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
-
-#[derive(Debug, Default, Clone)]
-pub struct ExternalSourcesResult {
-    pub edhrec_recommendations: Vec<EdhrecRecommendation>,
-    pub edhrec_unresolved_names: Vec<String>,
-    pub recommander_recommendations: Vec<RecommanderRecommendation>,
-    pub recommander_unresolved_names: Vec<String>,
-    pub source_errors: Vec<SourceError>,
-}
 
 /// Interroge EDHREC puis Recommander et fusionne leurs Recommandations
 /// externes filtrées. L'échec d'une Source est capturé dans `source_errors`
 /// sans bloquer l'autre.
 pub fn fetch_all(
     db: &CardsDb,
-    analysis: &AnalyzeResult,
+    deck: &DeckContext,
     edhrec_client: &dyn edhrec::EdhrecClient,
     recommander_client: &dyn recommander::RecommanderClient,
     edhrec_cache_dir: &Path,
-) -> ExternalSourcesResult {
-    let deck = DeckContext::from_analysis(analysis);
-    let mut result = ExternalSourcesResult::default();
+) -> ExternalSources {
+    let mut result = ExternalSources::default();
 
-    match edhrec::fetch_and_filter(
-        edhrec_client,
-        edhrec_cache_dir,
-        EDHREC_CACHE_TTL,
-        analysis,
-        db,
-        &deck,
-    ) {
+    match edhrec::fetch_and_filter(edhrec_client, edhrec_cache_dir, EDHREC_CACHE_TTL, db, deck) {
         Ok((recommendations, unresolved_names)) => {
             result.edhrec_recommendations = recommendations;
             result.edhrec_unresolved_names = unresolved_names;
@@ -59,7 +40,7 @@ pub fn fetch_all(
         }),
     }
 
-    match recommander::fetch_and_filter(recommander_client, analysis, db, &deck) {
+    match recommander::fetch_and_filter(recommander_client, db, deck) {
         Ok((recommendations, unresolved_names)) => {
             result.recommander_recommendations = recommendations;
             result.recommander_unresolved_names = unresolved_names;
@@ -227,35 +208,6 @@ mod tests {
         }
     }
 
-    fn sample_analysis() -> AnalyzeResult {
-        use crate::model::*;
-        AnalyzeResult {
-            commander: Card::named("Test Commander", &["G"]),
-            cards: vec![],
-            unresolved: vec![],
-            card_count: 100,
-            construction_errors: vec![],
-            mana_curve: ManaCurve {
-                buckets: vec![],
-                average_mana_value: 0.0,
-            },
-            mana_base: ManaBase {
-                land_count: 37,
-                sources_by_color: Default::default(),
-                symbols_by_color: Default::default(),
-            },
-            role_counts: Default::default(),
-            weaknesses: vec![],
-            synergies: vec![],
-            candidates: vec![],
-            edhrec_recommendations: vec![],
-            edhrec_unresolved_names: vec![],
-            recommander_recommendations: vec![],
-            recommander_unresolved_names: vec![],
-            source_errors: vec![],
-        }
-    }
-
     #[test]
     fn a_failing_source_produces_a_source_error_without_blocking_the_other() {
         let (_dir, db) = fixture_db();
@@ -266,7 +218,7 @@ mod tests {
 
         let result = fetch_all(
             &db,
-            &sample_analysis(),
+            &green_deck(&[]),
             &FailingEdhrecClient,
             &StubRecommanderClient(recommander_json),
             dir_for_test().path(),
@@ -295,7 +247,7 @@ mod tests {
 
         let result = fetch_all(
             &db,
-            &sample_analysis(),
+            &green_deck(&[]),
             &FailingEdhrecClient,
             &StubRecommanderClient(recommander_json),
             dir_for_test().path(),
@@ -314,7 +266,7 @@ mod tests {
         let (_dir, db) = fixture_db();
         let result = fetch_all(
             &db,
-            &sample_analysis(),
+            &green_deck(&[]),
             &FailingEdhrecClient,
             &FailingRecommanderClient,
             dir_for_test().path(),
@@ -329,7 +281,7 @@ mod tests {
         let (_dir, db) = fixture_db();
         let result = fetch_all(
             &db,
-            &sample_analysis(),
+            &green_deck(&[]),
             &StubEdhrecClient("not json".to_string()),
             &FailingRecommanderClient,
             dir_for_test().path(),

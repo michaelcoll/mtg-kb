@@ -1,53 +1,26 @@
 use std::collections::HashSet;
-use std::io::Read as _;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use crate::analyze::metrics::detect_roles;
 use crate::analyze::themes::detect_themes;
+use crate::cli::SearchArgs;
 use crate::db::cards::{CardsDb, SearchFilters};
-use crate::decklist::parser;
+use crate::decklist::{self, parser};
 use crate::model::{Card, ColorIdentity};
 use crate::output::{Format, print_json};
 
-#[allow(clippy::too_many_arguments)]
-pub fn run(
-    name: Option<String>,
-    type_contains: Option<String>,
-    subtype_contains: Option<String>,
-    text: Vec<String>,
-    color_identity: Option<String>,
-    legal_in: Option<String>,
-    mana_value: Option<f64>,
-    mana_value_min: Option<f64>,
-    mana_value_max: Option<f64>,
-    role: Vec<String>,
-    theme: Vec<String>,
-    exclude_deck: Option<String>,
-    limit: usize,
-    format: Format,
-) -> Result<()> {
+pub fn run(args: SearchArgs) -> Result<()> {
     let db = super::open_cards_db()?;
-    let exclude_names = exclude_deck.as_deref().map(names_in_decklist).transpose()?;
+    let exclude_names = args
+        .exclude_deck
+        .as_deref()
+        .map(names_in_decklist)
+        .transpose()?;
 
-    let results = search_cards(
-        &db,
-        name,
-        type_contains,
-        subtype_contains,
-        text,
-        color_identity,
-        legal_in,
-        mana_value,
-        mana_value_min,
-        mana_value_max,
-        role,
-        theme,
-        exclude_names,
-        limit,
-    )?;
+    let results = search_cards(&db, &args, exclude_names.as_ref())?;
 
-    match format {
+    match args.format {
         Format::Json => print_json(&results)?,
         Format::Table => print_table(&results),
     }
@@ -55,51 +28,44 @@ pub fn run(
 }
 
 /// Les filtres Rôle/Thème et l'exclusion par Decklist sont appliqués après
-/// la requête SQL, donc `limit` ne s'applique qu'à la fin.
-#[allow(clippy::too_many_arguments)]
+/// la requête SQL, donc `limit` ne s'applique qu'à la fin. `exclude_names`
+/// remplace la lecture de `args.exclude_deck`, déjà faite par l'appelant.
 fn search_cards(
     db: &CardsDb,
-    name: Option<String>,
-    type_contains: Option<String>,
-    subtype_contains: Option<String>,
-    text: Vec<String>,
-    color_identity: Option<String>,
-    legal_in: Option<String>,
-    mana_value: Option<f64>,
-    mana_value_min: Option<f64>,
-    mana_value_max: Option<f64>,
-    role: Vec<String>,
-    theme: Vec<String>,
-    exclude_names: Option<HashSet<String>>,
-    limit: usize,
+    args: &SearchArgs,
+    exclude_names: Option<&HashSet<String>>,
 ) -> Result<Vec<Card>> {
-    let needs_post_filter = !role.is_empty() || !theme.is_empty() || exclude_names.is_some();
+    let needs_post_filter =
+        !args.role.is_empty() || !args.theme.is_empty() || exclude_names.is_some();
 
     let filters = SearchFilters {
-        name,
-        type_contains,
-        subtype_contains,
-        oracle_text_contains: text,
-        color_identity_subset_of: color_identity.as_deref().map(ColorIdentity::from_letters),
-        legal_in_format: legal_in,
-        mana_value,
-        mana_value_min,
-        mana_value_max,
-        limit: if needs_post_filter { 0 } else { limit },
+        name: args.name.clone(),
+        type_contains: args.type_contains.clone(),
+        subtype_contains: args.subtype_contains.clone(),
+        oracle_text_contains: args.text.clone(),
+        color_identity_subset_of: args
+            .color_identity
+            .as_deref()
+            .map(ColorIdentity::from_letters),
+        legal_in_format: args.legal_in.clone(),
+        mana_value: args.mana_value,
+        mana_value_min: args.mana_value_min,
+        mana_value_max: args.mana_value_max,
+        limit: if needs_post_filter { 0 } else { args.limit },
     };
     let mut results = db.search(&filters)?;
 
-    if !role.is_empty() {
-        results.retain(|card| card_matches_all(&detect_roles(card), &role));
+    if !args.role.is_empty() {
+        results.retain(|card| card_matches_all(&detect_roles(card), &args.role));
     }
-    if !theme.is_empty() {
-        results.retain(|card| card_matches_all(&detect_themes(card), &theme));
+    if !args.theme.is_empty() {
+        results.retain(|card| card_matches_all(&detect_themes(card), &args.theme));
     }
-    if let Some(names) = &exclude_names {
+    if let Some(names) = exclude_names {
         results.retain(|card| !names.contains(&card.name));
     }
-    if needs_post_filter && limit > 0 {
-        results.truncate(limit);
+    if needs_post_filter && args.limit > 0 {
+        results.truncate(args.limit);
     }
     Ok(results)
 }
@@ -112,16 +78,7 @@ fn card_matches_all(detected: &[String], wanted: &[String]) -> bool {
 
 /// `path` peut être "-" pour lire depuis l'entrée standard.
 fn names_in_decklist(path: &str) -> Result<HashSet<String>> {
-    let input = if path == "-" {
-        let mut buf = String::new();
-        std::io::stdin()
-            .read_to_string(&mut buf)
-            .context("lecture de la Decklist depuis l'entrée standard")?;
-        buf
-    } else {
-        std::fs::read_to_string(path).with_context(|| format!("lecture du fichier {path}"))?
-    };
-    Ok(names_in_decklist_text(&input))
+    Ok(names_in_decklist_text(&decklist::read_source(path)?))
 }
 
 fn names_in_decklist_text(input: &str) -> HashSet<String> {
@@ -207,40 +164,24 @@ mod tests {
             .build()
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// `options` : options de `kb search`, parsées comme par la CLI.
     fn search(
         db: &CardsDb,
-        color_identity: Option<&str>,
-        legal_in: Option<&str>,
-        mana_value_max: Option<f64>,
-        role: &[&str],
-        theme: &[&str],
-        exclude_names: Option<HashSet<String>>,
-        limit: usize,
+        options: &[&str],
+        exclude_names: Option<&HashSet<String>>,
     ) -> Vec<Card> {
-        search_cards(
-            db,
-            None,
-            None,
-            None,
-            vec![],
-            color_identity.map(str::to_string),
-            legal_in.map(str::to_string),
-            None,
-            None,
-            mana_value_max,
-            role.iter().map(|r| r.to_string()).collect(),
-            theme.iter().map(|t| t.to_string()).collect(),
-            exclude_names,
-            limit,
-        )
-        .unwrap()
+        use clap::Parser as _;
+        let cli = crate::cli::Cli::try_parse_from(["kb", "search"].iter().chain(options)).unwrap();
+        let crate::cli::Command::Search(args) = cli.command else {
+            panic!("kb search attendu");
+        };
+        search_cards(db, &args, exclude_names).unwrap()
     }
 
     #[test]
     fn filters_by_role() {
         let (_dir, db) = fixture_db();
-        let results = search(&db, None, None, None, &["ramp"], &[], None, 50);
+        let results = search(&db, &["--role", "ramp"], None);
         let names: Vec<_> = results.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, vec!["Rampant Growth"]);
     }
@@ -248,7 +189,7 @@ mod tests {
     #[test]
     fn filters_by_theme() {
         let (_dir, db) = fixture_db();
-        let results = search(&db, None, None, None, &[], &["tribal:Goblin"], None, 50);
+        let results = search(&db, &["--theme", "tribal:Goblin"], None);
         let names: Vec<_> = results.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, vec!["Goblin King"]);
     }
@@ -258,7 +199,7 @@ mod tests {
         let (_dir, db) = fixture_db();
         let decklist = "Commander\n1 Doom Blade\n\nDeck\n1 Rampant Growth\n";
         let exclude_names = names_in_decklist_text(decklist);
-        let results = search(&db, None, None, None, &[], &[], Some(exclude_names), 50);
+        let results = search(&db, &[], Some(&exclude_names));
         let names: Vec<_> = results.iter().map(|c| c.name.as_str()).collect();
         assert!(!names.contains(&"Doom Blade"), "commander excluded");
         assert!(!names.contains(&"Rampant Growth"), "deck card excluded");
@@ -283,13 +224,17 @@ mod tests {
         let (_dir, db) = fixture_db();
         let results = search(
             &db,
-            Some("BG"),
-            Some("commander"),
-            Some(3.0),
-            &["removal_cible"],
-            &[],
+            &[
+                "--role",
+                "removal_cible",
+                "--color-identity",
+                "BG",
+                "--legal-in",
+                "commander",
+                "--mana-value-max",
+                "3",
+            ],
             None,
-            50,
         );
         let names: Vec<_> = results.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(
@@ -347,23 +292,25 @@ mod tests {
             names
         };
         assert_eq!(
-            names(search(&db, None, None, None, &["ramp"], &[], None, 50)),
+            names(search(&db, &["--role", "ramp"], None)),
             vec!["Rampant Growth", "Vanilla Bear"]
         );
         assert_eq!(
-            names(search(&db, None, None, None, &[], &["tokens"], None, 50)),
+            names(search(&db, &["--theme", "tokens"], None)),
             vec!["Beast Within", "Vanilla Bear"]
         );
         assert_eq!(
             names(search(
                 &db,
-                Some("B"),
-                Some("commander"),
+                &[
+                    "--role",
+                    "removal_cible",
+                    "--color-identity",
+                    "B",
+                    "--legal-in",
+                    "commander",
+                ],
                 None,
-                &["removal_cible"],
-                &[],
-                None,
-                50
             )),
             vec!["Hypothetical Banned Removal"]
         );
@@ -377,7 +324,7 @@ mod tests {
         // ici on ne filtre que par Rôle, sans légalité, pour avoir plus
         // d'un résultat, et on vérifie que `limit` s'applique bien après
         // le filtre post-SQL plutôt que sur le pool intermédiaire.
-        let results = search(&db, None, None, None, &["removal_cible"], &[], None, 1);
+        let results = search(&db, &["--role", "removal_cible", "--limit", "1"], None);
         assert_eq!(results.len(), 1);
     }
 }

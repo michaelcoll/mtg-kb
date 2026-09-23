@@ -97,10 +97,12 @@ fn hover_card_names(analysis: &AnalyzeResult) -> HashSet<&str> {
         .iter()
         .flat_map(|s| s.cards.iter().map(String::as_str));
     let edhrec = analysis
+        .external
         .edhrec_recommendations
         .iter()
         .map(|r| r.card.name.as_str());
     let recommander = analysis
+        .external
         .recommander_recommendations
         .iter()
         .map(|r| r.card.name.as_str());
@@ -268,19 +270,19 @@ mod tests {
                     matched_themes: vec![],
                     matched_weak_roles: vec!["ramp".to_string()],
                 }],
-                edhrec_recommendations: vec![EdhrecRecommendation {
-                    card: Card::named("Sol Ring", &[]),
-                    synergy: 0.4,
-                    inclusion_rate: 0.9,
-                    header: "Top Cards".to_string(),
-                }],
-                edhrec_unresolved_names: vec![],
-                recommander_recommendations: vec![RecommanderRecommendation {
-                    card: green("Cultivate"),
-                    score: 3.0,
-                }],
-                recommander_unresolved_names: vec![],
-                source_errors: vec![],
+                external: ExternalSources {
+                    edhrec_recommendations: vec![EdhrecRecommendation {
+                        card: Card::named("Sol Ring", &[]),
+                        synergy: 0.4,
+                        inclusion_rate: 0.9,
+                        header: "Top Cards".to_string(),
+                    }],
+                    recommander_recommendations: vec![RecommanderRecommendation {
+                        card: green("Cultivate"),
+                        score: 3.0,
+                    }],
+                    ..ExternalSources::default()
+                },
             },
             verdict: Verdict {
                 summary: "Solide".to_string(),

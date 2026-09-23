@@ -11,7 +11,7 @@ use anyhow::{Result, bail};
 use crate::db::cards::CardsDb;
 use crate::deck_context::DeckContext;
 use crate::decklist::parser::{self, DecklistLine};
-use crate::model::{AnalyzeResult, ResolvedCard, Synergy, UnresolvedLine};
+use crate::model::{AnalyzeResult, ExternalSources, ResolvedCard, Synergy, UnresolvedLine};
 
 const REQUIRED_DECK_SIZE: u32 = 100;
 
@@ -137,11 +137,7 @@ pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Resul
         synergies,
         candidates,
         // Remplies ensuite par `commands::analyze`, hors `--offline`.
-        edhrec_recommendations: Vec::new(),
-        edhrec_unresolved_names: Vec::new(),
-        recommander_recommendations: Vec::new(),
-        recommander_unresolved_names: Vec::new(),
-        source_errors: Vec::new(),
+        external: ExternalSources::default(),
     })
 }
 

@@ -206,29 +206,50 @@ pub fn mana_base(cards: &[ResolvedCard], commander: &Card) -> ManaBase {
     }
 }
 
-#[derive(Debug, Clone)]
+/// Seuils de `kb analyze`, exposés tels quels en options de la CLI : les
+/// défauts ne sont écrits qu'ici, dans `Thresholds::DEFAULT`.
+#[derive(Debug, Clone, PartialEq, clap::Args)]
 pub struct Thresholds {
+    /// Nombre minimal de terrains attendu
+    #[arg(long, default_value_t = Thresholds::DEFAULT.min_lands)]
     pub min_lands: u32,
+    /// Nombre minimal de Cartes de Rôle "ramp" attendu
+    #[arg(long, default_value_t = Thresholds::DEFAULT.min_ramp)]
     pub min_ramp: u32,
+    /// Nombre minimal de Cartes de Rôle "pioche" attendu
+    #[arg(long, default_value_t = Thresholds::DEFAULT.min_draw)]
     pub min_draw: u32,
+    /// Nombre minimal de Cartes de Rôle "removal_cible" attendu
+    #[arg(long, default_value_t = Thresholds::DEFAULT.min_removal)]
     pub min_removal: u32,
+    /// Nombre minimal de Cartes de Rôle "wipe" attendu
+    #[arg(long, default_value_t = Thresholds::DEFAULT.min_wipe)]
     pub min_wipe: u32,
+    /// Mana value moyenne (hors terrains) au-delà de laquelle la courbe
+    /// est jugée trop chère
+    #[arg(long, default_value_t = Thresholds::DEFAULT.max_average_mana_value)]
     pub max_average_mana_value: f64,
-    /// Nombre max de Cartes à mana value ≥ `HIGH_COST_MANA_VALUE`.
+    /// Nombre de Cartes à mana value ≥ 6 au-delà duquel la courbe est
+    /// jugée déséquilibrée vers le haut
+    #[arg(long, default_value_t = Thresholds::DEFAULT.max_high_cost_cards)]
     pub max_high_cost_cards: u32,
+}
+
+impl Thresholds {
+    pub const DEFAULT: Self = Self {
+        min_lands: 35,
+        min_ramp: 10,
+        min_draw: 8,
+        min_removal: 8,
+        min_wipe: 2,
+        max_average_mana_value: 3.5,
+        max_high_cost_cards: 8,
+    };
 }
 
 impl Default for Thresholds {
     fn default() -> Self {
-        Self {
-            min_lands: 35,
-            min_ramp: 10,
-            min_draw: 8,
-            min_removal: 8,
-            min_wipe: 2,
-            max_average_mana_value: 3.5,
-            max_high_cost_cards: 8,
-        }
+        Self::DEFAULT
     }
 }
 

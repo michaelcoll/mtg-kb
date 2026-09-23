@@ -30,6 +30,7 @@ pub fn origins_of(analysis: &AnalyzeResult, card_name: &str) -> Vec<Origin> {
         origins.push(Origin::Kb);
     }
     if analysis
+        .external
         .edhrec_recommendations
         .iter()
         .any(|r| r.card.name == card_name)
@@ -37,6 +38,7 @@ pub fn origins_of(analysis: &AnalyzeResult, card_name: &str) -> Vec<Origin> {
         origins.push(Origin::Edhrec);
     }
     if analysis
+        .external
         .recommander_recommendations
         .iter()
         .any(|r| r.card.name == card_name)
@@ -84,19 +86,19 @@ mod tests {
                 matched_themes: vec![],
                 matched_weak_roles: vec!["ramp".to_string()],
             }],
-            edhrec_recommendations: vec![EdhrecRecommendation {
-                card: card("Sol Ring"),
-                synergy: 0.1,
-                inclusion_rate: 0.9,
-                header: "High Synergy Cards".to_string(),
-            }],
-            edhrec_unresolved_names: vec![],
-            recommander_recommendations: vec![RecommanderRecommendation {
-                card: card("Cultivate"),
-                score: 3.0,
-            }],
-            recommander_unresolved_names: vec![],
-            source_errors: vec![],
+            external: ExternalSources {
+                edhrec_recommendations: vec![EdhrecRecommendation {
+                    card: card("Sol Ring"),
+                    synergy: 0.1,
+                    inclusion_rate: 0.9,
+                    header: "High Synergy Cards".to_string(),
+                }],
+                recommander_recommendations: vec![RecommanderRecommendation {
+                    card: card("Cultivate"),
+                    score: 3.0,
+                }],
+                ..ExternalSources::default()
+            },
         }
     }
 
@@ -129,12 +131,15 @@ mod tests {
     #[test]
     fn a_suggestion_present_in_several_lists_has_several_origins() {
         let mut analysis = sample();
-        analysis.edhrec_recommendations.push(EdhrecRecommendation {
-            card: card("Rampant Growth"),
-            synergy: 0.2,
-            inclusion_rate: 0.5,
-            header: "Top Cards".to_string(),
-        });
+        analysis
+            .external
+            .edhrec_recommendations
+            .push(EdhrecRecommendation {
+                card: card("Rampant Growth"),
+                synergy: 0.2,
+                inclusion_rate: 0.5,
+                header: "Top Cards".to_string(),
+            });
         assert_eq!(
             origins_of(&analysis, "Rampant Growth"),
             vec![Origin::Kb, Origin::Edhrec]
