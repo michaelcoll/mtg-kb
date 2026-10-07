@@ -10,7 +10,9 @@ mod swap;
 mod validate;
 
 pub use crate::model::Origin;
-pub use prepare::{CardPrintings, PrintingLookup, ReportModel, ValidatedSuggestion, prepare};
+pub use prepare::{
+    CardPrintings, GameChangerTally, PrintingLookup, ReportModel, ValidatedSuggestion, prepare,
+};
 pub use swap::SwapWarning;
 
 pub fn slugify(name: &str) -> String {
@@ -71,6 +73,7 @@ fn render_head(commander_name: &str) -> String {
   :root {{
     --bg: #0f1115; --panel: #171a21; --text: #e8eaed; --muted: #9aa0a6;
     --accent: #7c9cff; --ok: #3ecf8e; --error: #ff6b6b; --border: #2a2e37;
+    --warn: #f5b94a;
   }}
   * {{ box-sizing: border-box; }}
   body {{
@@ -87,6 +90,10 @@ fn render_head(commander_name: &str) -> String {
   .badge-ok {{ background: rgba(62,207,142,0.15); color: var(--ok); }}
   .badge-error {{ background: rgba(255,107,107,0.15); color: var(--error); }}
   .badge-origin {{ background: rgba(124,156,255,0.15); color: var(--accent); font-size: 0.7rem; padding: 0.1rem 0.5rem; margin-left: 0.35rem; text-transform: uppercase; letter-spacing: 0.03em; }}
+  .badge-game-changer {{ background: rgba(245,185,74,0.15); color: var(--warn); font-size: 0.7rem; padding: 0.1rem 0.5rem; margin-left: 0.35rem; }}
+  .badge-salt {{ background: var(--border); color: var(--muted); font-size: 0.7rem; padding: 0.1rem 0.5rem; margin-left: 0.35rem; }}
+  .badge-consensus {{ background: var(--accent); color: var(--bg); font-size: 0.7rem; padding: 0.1rem 0.5rem; margin-left: 0.35rem; text-transform: uppercase; letter-spacing: 0.03em; }}
+  .suggestion-row.consensus {{ border-left: 3px solid var(--accent); padding-left: 0.6rem; }}
   .warning {{ border-color: var(--error); }}
   section {{ background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem 1.5rem; margin-top: 1rem; }}
   table {{ width: 100%; border-collapse: collapse; }}
@@ -402,6 +409,40 @@ fn render_roles_section(role_counts: &BTreeMap<String, u32>) -> String {
     )
 }
 
+fn game_changer_count_label(count: usize) -> String {
+    let plural = if count > 1 { "s" } else { "" };
+    format!("{count} Game Changer{plural}")
+}
+
+fn render_game_changers_section(tally: &GameChangerTally) -> String {
+    let count = game_changer_count_label(tally.in_deck.len());
+    let stat = match (tally.bracket, tally.limit) {
+        (Some(_), Some(limit)) => format!("<strong>{count} / {limit}</strong>"),
+        (Some(bracket), None) => format!(
+            "<strong>{count}</strong><span class=\"muted\">Bracket {} : sans limite</span>",
+            u8::from(bracket)
+        ),
+        (None, _) => format!("<strong>{count}</strong>"),
+    };
+    let cards = if tally.in_deck.is_empty() {
+        String::new()
+    } else {
+        let items: String = tally
+            .in_deck
+            .iter()
+            .map(|name| format!("<li>{}{}</li>", escape_html(name), game_changer_badge(true)))
+            .collect();
+        format!("<ul>{items}</ul>")
+    };
+    format!(
+        r#"  <section>
+    <h2 style="{SECTION_H2_STYLE}">Game Changers</h2>
+    <p class="stat">{stat}</p>{cards}
+  </section>
+"#
+    )
+}
+
 fn render_weaknesses_section(weaknesses: &[String]) -> String {
     let weaknesses = list_or_none(weaknesses);
     format!(
@@ -440,17 +481,19 @@ fn render_synergies_section(synergies: &[Synergy], card_printings: &CardPrinting
     )
 }
 
-fn render_card_to_remove(
-    card_to_remove: Option<&str>,
-    printing: Option<&ReferencePrinting>,
-) -> String {
-    let Some(card_to_remove) = card_to_remove else {
+fn render_card_to_remove(suggestion: &ValidatedSuggestion) -> String {
+    let Some(card_to_remove) = suggestion.card_to_remove.as_deref() else {
         return String::new();
     };
-    let art = render_card_art(card_to_remove, printing, "card-to-remove-art");
+    let art = render_card_art(
+        card_to_remove,
+        suggestion.card_to_remove_printing.as_ref(),
+        "card-to-remove-art",
+    );
     let name = escape_html(card_to_remove);
+    let badge = game_changer_badge(suggestion.card_to_remove_game_changer);
     format!(
-        "<span class=\"card-to-remove\"><span class=\"muted\">Remplace :</span> {art}<span class=\"card-to-remove-name\">{name}</span></span>"
+        "<span class=\"card-to-remove\"><span class=\"muted\">Remplace :</span> {art}<span class=\"card-to-remove-name\">{name}</span>{badge}</span>"
     )
 }
 
@@ -459,6 +502,22 @@ fn render_origin_badges(origins: &[Origin]) -> String {
         .iter()
         .map(|o| format!("<span class=\"badge badge-origin\">{}</span>", o.label()))
         .collect()
+}
+
+fn game_changer_badge(game_changer: bool) -> &'static str {
+    if game_changer {
+        "<span class=\"badge badge-game-changer\" title=\"Game Changer\">Game Changer</span>"
+    } else {
+        ""
+    }
+}
+
+/// Signal seulement, jamais un filtre (ADR 0006).
+fn salt_badge(salt: Option<f64>) -> String {
+    salt.map(|salt| {
+        format!("<span class=\"badge badge-salt\" title=\"Salt EDHREC\">salt {salt:.2}</span>")
+    })
+    .unwrap_or_default()
 }
 
 fn render_swap_warnings(warnings: &[SwapWarning]) -> String {
@@ -481,14 +540,24 @@ fn render_suggestions_section(suggestions: &[ValidatedSuggestion]) -> String {
         .map(|s| {
             let art = render_card_art(&s.card_name, s.printing.as_ref(), "suggestion-art");
             let name = escape_html(&s.card_name);
-            let badges = render_origin_badges(&s.origins);
-            let card_to_remove = render_card_to_remove(
-                s.card_to_remove.as_deref(),
-                s.card_to_remove_printing.as_ref(),
+            let (row_class, consensus_badge) = if s.is_consensus() {
+                (
+                    "suggestion-row consensus",
+                    "<span class=\"badge badge-consensus\" title=\"Proposée par plusieurs Origines\">Consensus</span>",
+                )
+            } else {
+                ("suggestion-row", "")
+            };
+            let badges = format!(
+                "{}{}{consensus_badge}{}",
+                game_changer_badge(s.game_changer),
+                salt_badge(s.salt),
+                render_origin_badges(&s.origins)
             );
+            let card_to_remove = render_card_to_remove(s);
             let swap_warnings = render_swap_warnings(&s.swap_warnings);
             format!(
-                "<li class=\"suggestion-row\">{art}<span class=\"suggestion-body\"><strong>{name}</strong>{badges}<p>{}</p>{card_to_remove}{swap_warnings}</span></li>",
+                "<li class=\"{row_class}\">{art}<span class=\"suggestion-body\"><strong>{name}</strong>{badges}<p>{}</p>{card_to_remove}{swap_warnings}</span></li>",
                 escape_html(&s.justification)
             )
         })
@@ -644,6 +713,7 @@ pub fn render(model: &ReportModel) -> String {
     let mana_curve = trimmed_with_newline(render_mana_curve_section(&a.mana_curve));
     let mana_base = trimmed_with_newline(render_mana_base_section(&a.mana_base));
     let roles = trimmed_with_newline(render_roles_section(&a.role_counts));
+    let game_changers = trimmed_with_newline(render_game_changers_section(&model.game_changers));
     let weaknesses = trimmed_with_newline(render_weaknesses_section(&a.weaknesses));
     let synergies = trimmed_with_newline(render_synergies_section(&a.synergies, card_printings));
     let suggestions = trimmed_with_newline(render_suggestions_section(&model.suggestions));
@@ -663,7 +733,7 @@ pub fn render(model: &ReportModel) -> String {
     let hover_preview = render_hover_preview_markup();
 
     format!(
-        "{head}<body>\n<main>\n  {header}\n{verdict}\n{source_errors}{mana_curve}\n{mana_base}\n{roles}\n{weaknesses}\n{synergies}\n{suggestions}\n{appendix}\n{credits}\n{unresolved}</main>\n{hover_preview}</body>\n</html>\n"
+        "{head}<body>\n<main>\n  {header}\n{verdict}\n{source_errors}{mana_curve}\n{mana_base}\n{roles}\n{game_changers}\n{weaknesses}\n{synergies}\n{suggestions}\n{appendix}\n{credits}\n{unresolved}</main>\n{hover_preview}</body>\n</html>\n"
     )
 }
 
@@ -739,7 +809,10 @@ mod tests {
                     card_to_remove: s.card_to_remove,
                     printing: None,
                     card_to_remove_printing: None,
+                    card_to_remove_game_changer: false,
                     origins: vec![],
+                    game_changer: false,
+                    salt: None,
                     swap_warnings: vec![],
                 })
                 .collect(),
@@ -747,6 +820,7 @@ mod tests {
             verdict: enriched.verdict,
             commander_printing: None,
             card_printings: CardPrintings::new(),
+            game_changers: GameChangerTally::default(),
         }
     }
 

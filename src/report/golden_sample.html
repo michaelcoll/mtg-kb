@@ -7,6 +7,7 @@
   :root {
     --bg: #0f1115; --panel: #171a21; --text: #e8eaed; --muted: #9aa0a6;
     --accent: #7c9cff; --ok: #3ecf8e; --error: #ff6b6b; --border: #2a2e37;
+    --warn: #f5b94a;
   }
   * { box-sizing: border-box; }
   body {
@@ -23,6 +24,10 @@
   .badge-ok { background: rgba(62,207,142,0.15); color: var(--ok); }
   .badge-error { background: rgba(255,107,107,0.15); color: var(--error); }
   .badge-origin { background: rgba(124,156,255,0.15); color: var(--accent); font-size: 0.7rem; padding: 0.1rem 0.5rem; margin-left: 0.35rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  .badge-game-changer { background: rgba(245,185,74,0.15); color: var(--warn); font-size: 0.7rem; padding: 0.1rem 0.5rem; margin-left: 0.35rem; }
+  .badge-salt { background: var(--border); color: var(--muted); font-size: 0.7rem; padding: 0.1rem 0.5rem; margin-left: 0.35rem; }
+  .badge-consensus { background: var(--accent); color: var(--bg); font-size: 0.7rem; padding: 0.1rem 0.5rem; margin-left: 0.35rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  .suggestion-row.consensus { border-left: 3px solid var(--accent); padding-left: 0.6rem; }
   .warning { border-color: var(--error); }
   section { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem 1.5rem; margin-top: 1rem; }
   table { width: 100%; border-collapse: collapse; }
@@ -95,6 +100,11 @@
       <thead><tr><th>Rôle</th><th>Cartes</th></tr></thead>
       <tbody></tbody>
     </table>
+  </section>
+
+  <section>
+    <h2 style="margin-top:0;border-top:none;padding-top:0;border-bottom:none">Game Changers</h2>
+    <p class="stat"><strong>0 Game Changer</strong></p>
   </section>
 
   <section>
