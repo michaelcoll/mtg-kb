@@ -27,6 +27,10 @@ description = "Runs the test suite"
 run = "cargo nextest run"
 alias = ["t"]
 
+[tasks.regression]
+description = "Analyse les Decklists personnelles de data/decks/ sur la vraie Base cartes (tests ignorés par défaut)"
+run = "cargo test personal_decklists -- --ignored --nocapture"
+
 [tasks.coverage]
 description = "Runs the test suite with coverage (terminal summary)"
 run = "cargo llvm-cov --workspace --summary-only"
