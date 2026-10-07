@@ -127,6 +127,57 @@ impl ColorIdentity {
     }
 }
 
+/// Bracket : niveau de puissance visé, de 1 à 5 (CONTEXT.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "u8", into = "u8")]
+pub struct Bracket(u8);
+
+impl Bracket {
+    /// Nombre maximal de Game Changers dans le Deck ; `None` : sans limite.
+    pub fn game_changer_limit(self) -> Option<usize> {
+        match self.0 {
+            1 | 2 => Some(0),
+            3 => Some(3),
+            _ => None,
+        }
+    }
+}
+
+impl TryFrom<u8> for Bracket {
+    type Error = String;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        if (1..=5).contains(&value) {
+            Ok(Self(value))
+        } else {
+            Err(format!("le Bracket va de 1 à 5 (reçu : {value})"))
+        }
+    }
+}
+
+impl From<Bracket> for u8 {
+    fn from(bracket: Bracket) -> Self {
+        bracket.0
+    }
+}
+
+impl std::str::FromStr for Bracket {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let value: u8 = s
+            .parse()
+            .map_err(|_| format!("le Bracket va de 1 à 5 (reçu : {s})"))?;
+        Self::try_from(value)
+    }
+}
+
+impl std::fmt::Display for Bracket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 /// Une Carte et ses Faces (ADR 0004). `mana_value` est celle de la Carte
 /// (celle qui compte hors de la pile), `front.mana_value` celle de la Face.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -464,6 +515,9 @@ pub struct AnalyzeResult {
     pub cards: Vec<ResolvedCard>,
     pub unresolved: Vec<UnresolvedLine>,
     pub card_count: u32,
+    /// Absent (`null`) sans `--bracket`, ou dans un JSON qui l'ignore.
+    #[serde(default)]
+    pub bracket: Option<Bracket>,
     /// Taille, singleton, Identité de couleur.
     pub construction_errors: Vec<String>,
     pub mana_curve: ManaCurve,

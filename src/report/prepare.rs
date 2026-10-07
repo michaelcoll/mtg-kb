@@ -264,6 +264,7 @@ mod tests {
                 }],
                 unresolved: vec![],
                 card_count: 100,
+                bracket: None,
                 construction_errors: vec![],
                 mana_curve: ManaCurve {
                     buckets: vec![],
@@ -400,6 +401,80 @@ mod tests {
             }
             other => panic!("violations attendues, obtenu {other:?}"),
         }
+    }
+
+    fn game_changer(name: &str) -> Card {
+        Card {
+            game_changer: true,
+            ..green(name)
+        }
+    }
+
+    /// JSON enrichi relu avec `bracket` et `game_changers_in_deck` Game
+    /// Changers dans le Deck, comme `kb report` le lit.
+    fn enriched_json_in_bracket(
+        bracket: u8,
+        game_changers_in_deck: &[&str],
+        suggestions: Vec<Suggestion>,
+    ) -> EnrichedAnalysis {
+        let mut enriched = sample(suggestions);
+        enriched
+            .analysis
+            .cards
+            .extend(game_changers_in_deck.iter().map(|name| ResolvedCard {
+                quantity: 1,
+                roles: vec![],
+                themes: vec![],
+                card: game_changer(name),
+            }));
+        let mut json = serde_json::to_value(&enriched).unwrap();
+        json["bracket"] = bracket.into();
+        serde_json::from_value(json).unwrap()
+    }
+
+    fn lookup_with_game_changers() -> MapLookup {
+        lookup().with(game_changer("Survival of the Fittest"))
+    }
+
+    #[test]
+    fn a_game_changer_suggestion_beyond_the_bracket_limit_is_refused() {
+        let enriched =
+            enriched_json_in_bracket(2, &[], vec![suggestion("Survival of the Fittest", None)]);
+        match prepare(enriched, &lookup_with_game_changers()) {
+            Err(PrepareError::Violations(violations)) => {
+                assert_eq!(violations.len(), 1, "{violations:?}");
+                assert!(
+                    violations[0].contains("Survival of the Fittest"),
+                    "{violations:?}"
+                );
+                assert!(violations[0].contains("Game Changer"), "{violations:?}");
+                assert!(violations[0].contains("Bracket 2"), "{violations:?}");
+            }
+            other => panic!("violation attendue, obtenu {other:?}"),
+        }
+    }
+
+    #[test]
+    fn in_bracket_3_a_game_changer_suggestion_is_refused_only_from_three_in_the_deck() {
+        let suggest = || vec![suggestion("Survival of the Fittest", None)];
+        let below = enriched_json_in_bracket(3, &["Demonic Tutor", "Cyclonic Rift"], suggest());
+        assert!(prepare(below, &lookup_with_game_changers()).is_ok());
+
+        let at_limit = enriched_json_in_bracket(
+            3,
+            &["Demonic Tutor", "Cyclonic Rift", "Smothering Tithe"],
+            suggest(),
+        );
+        assert!(matches!(
+            prepare(at_limit, &lookup_with_game_changers()),
+            Err(PrepareError::Violations(_))
+        ));
+    }
+
+    #[test]
+    fn without_bracket_a_game_changer_suggestion_is_accepted() {
+        let enriched = sample(vec![suggestion("Survival of the Fittest", None)]);
+        assert!(prepare(enriched, &lookup_with_game_changers()).is_ok());
     }
 
     fn with_roles(mut card: Card, roles: &[&str]) -> Card {

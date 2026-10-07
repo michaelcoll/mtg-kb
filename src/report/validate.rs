@@ -28,11 +28,19 @@ pub(super) fn validate_suggestions(
 
         if let Err(ineligible) = deck.eligibility(&card) {
             let rule = match ineligible {
-                Ineligible::Illegal => "Carte non légale en Commander.",
-                Ineligible::OutsideIdentity => "hors de l'Identité de couleur du Commandant.",
-                Ineligible::AlreadyInDeck => "Carte déjà présente dans le Deck.",
+                Ineligible::AlreadyInDeck => "Carte déjà présente dans le Deck.".to_string(),
+                Ineligible::GameChangerOverLimit => format!(
+                    "Game Changer au-delà de la limite du Bracket {} ({} Game Changers dans le Deck, {} autorisés).",
+                    deck.bracket().map_or_else(String::new, |b| b.to_string()),
+                    deck.game_changers().len(),
+                    deck.game_changer_limit().unwrap_or_default(),
+                ),
+                Ineligible::Illegal => "Carte non légale en Commander.".to_string(),
+                Ineligible::OutsideIdentity => {
+                    "hors de l'Identité de couleur du Commandant.".to_string()
+                }
             };
-            push(&mut violations, name, rule);
+            push(&mut violations, name, &rule);
         }
 
         if let Some(card_to_remove) = &suggestion.card_to_remove
@@ -83,6 +91,7 @@ mod tests {
                 }],
                 unresolved: vec![],
                 card_count: 100,
+                bracket: None,
                 construction_errors: vec![],
                 mana_curve: ManaCurve {
                     buckets: vec![],

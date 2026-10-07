@@ -89,6 +89,7 @@ mod tests {
             cards: vec![],
             unresolved: vec![],
             card_count: 100,
+            bracket: None,
             construction_errors: vec![],
             mana_curve: ManaCurve {
                 buckets: vec![],

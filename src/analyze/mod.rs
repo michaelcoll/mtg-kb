@@ -13,15 +13,29 @@ use anyhow::{Result, bail};
 use crate::db::cards::CardsDb;
 use crate::deck_context::DeckContext;
 use crate::decklist::parser::{self, DecklistLine};
-use crate::model::{AnalyzeResult, ExternalSources, ResolvedCard, Synergy, UnresolvedLine};
+use crate::model::{
+    AnalyzeResult, Bracket, ExternalSources, ResolvedCard, Synergy, UnresolvedLine,
+};
 
 const REQUIRED_DECK_SIZE: u32 = 100;
 
 pub(crate) const MAJOR_THEME_MIN_CARDS: u32 = 8;
 
-/// Erreur uniquement si le Commandant est ambigu (0 ou 2+) : Cartes non
-/// résolues et écarts de validation sont reportés dans le résultat.
+/// Analyse sans Bracket.
+#[cfg(test)]
 pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Result<AnalyzeResult> {
+    run_in_bracket(input, db, thresholds, None)
+}
+
+/// Erreur uniquement si le Commandant est ambigu (0 ou 2+) : Cartes non
+/// résolues et écarts de validation sont reportés dans le résultat. Le
+/// Bracket, facultatif, limite les Game Changers proposés.
+pub fn run_in_bracket(
+    input: &str,
+    db: &CardsDb,
+    thresholds: &metrics::Thresholds,
+    bracket: Option<Bracket>,
+) -> Result<AnalyzeResult> {
     let decklist = parser::parse(input);
 
     if decklist.commander.is_empty() {
@@ -72,7 +86,7 @@ pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Resul
         ));
     }
 
-    let deck = DeckContext::new(&commander, cards.iter().map(|c| &c.card));
+    let deck = DeckContext::new(&commander, cards.iter().map(|c| &c.card)).in_bracket(bracket);
     for resolved in &cards {
         if resolved.quantity > 1 && !resolved.card.is_basic_land() {
             construction_errors.push(format!(
@@ -92,6 +106,16 @@ pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Resul
                 resolved.card.name
             ));
         }
+    }
+
+    if let (Some(bracket), Some(limit)) = (deck.bracket(), deck.game_changer_limit())
+        && deck.game_changers().len() > limit
+    {
+        weaknesses.push(format!(
+            "Game Changers au-delà de la limite du Bracket {bracket} : {} pour {limit} autorisé(s) ({})",
+            deck.game_changers().len(),
+            deck.game_changers().join(", ")
+        ));
     }
 
     let mana_curve = metrics::mana_curve(&cards);
@@ -153,6 +177,7 @@ pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Resul
         cards,
         unresolved,
         card_count,
+        bracket,
         construction_errors,
         mana_curve,
         mana_base,
