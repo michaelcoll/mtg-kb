@@ -279,6 +279,7 @@ pub fn curve_weaknesses(curve: &ManaCurve, thresholds: &Thresholds) -> Vec<Strin
     weaknesses
 }
 
+const TERRAIN: &str = "terrain";
 const RAMP: &str = "ramp";
 const PIOCHE: &str = "pioche";
 const REMOVAL_CIBLE: &str = "removal_cible";
@@ -293,14 +294,19 @@ fn role_thresholds(thresholds: &Thresholds) -> [(&'static str, &'static str, u32
     ]
 }
 
+/// Rôles sous leur seuil, qui ouvrent chacun un panier de Candidats :
+/// `terrain` sous `min_lands` (Point faible « base de mana insuffisante »),
+/// puis les Rôles de `role_thresholds`.
 pub fn weak_role_names(
     role_counts: &BTreeMap<String, u32>,
     thresholds: &Thresholds,
 ) -> Vec<String> {
-    role_thresholds(thresholds)
-        .into_iter()
-        .filter(|(role, _, min)| *role_counts.get(*role).unwrap_or(&0) < *min)
-        .map(|(role, _, _)| role.to_string())
+    let lands = (TERRAIN, thresholds.min_lands);
+    let roles = role_thresholds(thresholds).map(|(role, _, min)| (role, min));
+    std::iter::once(lands)
+        .chain(roles)
+        .filter(|(role, min)| *role_counts.get(*role).unwrap_or(&0) < *min)
+        .map(|(role, _)| role.to_string())
         .collect()
 }
 

@@ -346,3 +346,133 @@ mod tests {
         assert!(result.external.recommander_recommendations.is_empty());
     }
 }
+
+/// Terrains Candidats quand la base de mana est insuffisante (#90).
+#[cfg(test)]
+mod land_candidates_tests {
+    use super::*;
+    use crate::db::fixture::{CardsFixture, FixtureCard};
+
+    fn basic(uuid: &str, name: &str, color: &str) -> FixtureCard {
+        FixtureCard::new(uuid, name)
+            .types("Land")
+            .subtypes(name)
+            .supertypes("Basic")
+            .text(&format!("({{T}}: Add {{{color}}}.)"))
+            .identity(color)
+    }
+
+    fn dual(uuid: &str, name: &str, identity: &str) -> FixtureCard {
+        FixtureCard::new(uuid, name)
+            .types("Land")
+            .text("{T}: Add {G} or {U}.")
+            .identity(identity)
+    }
+
+    /// Atraxa, deux terrains de base, un dual dans l'Identité, un dual hors
+    /// Identité et `extra_duals` terrains non-base supplémentaires.
+    fn fixture_db(extra_duals: usize) -> (tempfile::TempDir, CardsDb) {
+        CardsFixture::new()
+            .cards([
+                FixtureCard::new("atraxa", "Atraxa, Praetors' Voice")
+                    .types("Creature")
+                    .supertypes("Legendary")
+                    .identity("B, G, U, W"),
+                basic("forest", "Forest", "G"),
+                basic("plains", "Plains", "W"),
+                dual("pool", "Breeding Pool", "G, U"),
+                FixtureCard::new("crypt", "Blood Crypt")
+                    .types("Land")
+                    .text("{T}: Add {B} or {R}.")
+                    .identity("B, R"),
+            ])
+            .cards(
+                (0..extra_duals)
+                    .map(|i| dual(&format!("dual-{i}"), &format!("Simic Land {i:02}"), "G, U")),
+            )
+            .build()
+    }
+
+    struct NoEdhrec;
+    impl EdhrecClient for NoEdhrec {
+        fn fetch(&self, _slug: &str) -> Result<String> {
+            panic!("--offline ne doit jamais appeler EDHREC")
+        }
+    }
+
+    struct NoRecommander;
+    impl RecommanderClient for NoRecommander {
+        fn fetch(&self, _body: &serde_json::Value) -> Result<String> {
+            panic!("--offline ne doit jamais appeler Recommander")
+        }
+    }
+
+    fn analyze_offline(db: &CardsDb, forests: u32) -> AnalyzeResult {
+        let cache_dir = tempfile::tempdir().unwrap();
+        let input = format!("Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n{forests} Forest\n");
+        analyze_deck(
+            &input,
+            db,
+            &Thresholds::default(),
+            true,
+            &NoEdhrec,
+            &NoRecommander,
+            cache_dir.path(),
+        )
+        .unwrap()
+    }
+
+    fn land_candidate_names(result: &AnalyzeResult) -> Vec<&str> {
+        result
+            .candidates
+            .iter()
+            .filter(|c| c.matched_weak_roles.iter().any(|r| r == "terrain"))
+            .map(|c| c.card.name.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn a_deck_below_min_lands_gets_eligible_nonbasic_land_candidates() {
+        let (_dir, db) = fixture_db(0);
+        let result = analyze_offline(&db, 30);
+
+        let names = land_candidate_names(&result);
+        assert_eq!(names, vec!["Breeding Pool"], "{:?}", result.candidates);
+    }
+
+    #[test]
+    fn basic_lands_are_never_candidates() {
+        let (_dir, db) = fixture_db(0);
+        let result = analyze_offline(&db, 30);
+
+        let names: Vec<_> = result
+            .candidates
+            .iter()
+            .map(|c| c.card.name.as_str())
+            .collect();
+        assert!(!names.contains(&"Plains"), "{names:?}");
+        assert!(!names.contains(&"Forest"), "{names:?}");
+    }
+
+    #[test]
+    fn a_deck_at_min_lands_gets_no_land_candidates() {
+        let (_dir, db) = fixture_db(0);
+        let result = analyze_offline(&db, Thresholds::default().min_lands);
+
+        assert!(land_candidate_names(&result).is_empty());
+    }
+
+    #[test]
+    fn land_candidates_are_capped_at_ten_without_duplicates() {
+        let (_dir, db) = fixture_db(15);
+        let result = analyze_offline(&db, 30);
+
+        assert_eq!(land_candidate_names(&result).len(), 10);
+        let unique: std::collections::HashSet<&str> = result
+            .candidates
+            .iter()
+            .map(|c| c.card.name.as_str())
+            .collect();
+        assert_eq!(unique.len(), result.candidates.len());
+    }
+}
