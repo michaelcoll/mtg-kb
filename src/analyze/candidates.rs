@@ -13,7 +13,7 @@ const CANDIDATE_LIMIT_PER_BUCKET: usize = 10;
 
 /// Cartes éligibles (`DeckContext`) réparties en Candidats : jusqu'à
 /// `CANDIDATE_LIMIT_PER_BUCKET` par Rôle sous-représenté et par Thème majeur,
-/// dédupliqués par nom. Un Candidat porte tous les Rôles/Thèmes du Deck qu'il
+/// dédupliqués par nom. Les terrains de base ne sont jamais Candidats. Un Candidat porte tous les Rôles/Thèmes du Deck qu'il
 /// matche. Les Cartes qui n'en matchent aucun sont écartées.
 pub fn find_candidates(
     db: &CardsDb,
@@ -25,7 +25,7 @@ pub fn find_candidates(
 
     let scored: Vec<Candidate> = pool
         .into_iter()
-        .filter(|card| deck.eligibility(card).is_ok())
+        .filter(|card| deck.eligibility(card).is_ok() && !card.is_basic_land())
         .filter_map(|card| {
             let card_themes = themes::detect_themes(&card);
             let matched_themes: Vec<String> = card_themes
