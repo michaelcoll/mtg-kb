@@ -17,6 +17,14 @@ pub const MAX_RECOMMENDATIONS_PER_SOURCE: usize = 30;
 
 pub const EDHREC_CACHE_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
+/// Clients des Sources externes et cache des pages EDHREC.
+#[derive(Clone, Copy)]
+pub struct Clients<'a> {
+    pub edhrec: &'a dyn edhrec::EdhrecClient,
+    pub recommander: &'a dyn recommander::RecommanderClient,
+    pub edhrec_cache_dir: &'a Path,
+}
+
 /// Interroge EDHREC (page Commandant, puis une page par Thème majeur de la
 /// table) puis Recommander, et fusionne leurs Recommandations externes
 /// filtrées. L'échec d'une page ou d'une Source est capturé dans
@@ -26,16 +34,14 @@ pub fn fetch_all<'a>(
     db: &CardsDb,
     deck: &DeckContext,
     major_themes: impl IntoIterator<Item = &'a String>,
-    edhrec_client: &dyn edhrec::EdhrecClient,
-    recommander_client: &dyn recommander::RecommanderClient,
-    edhrec_cache_dir: &Path,
+    clients: Clients<'_>,
 ) -> ExternalSources {
     let mut result = ExternalSources::default();
 
     for page in edhrec::pages(deck, major_themes) {
         match edhrec::fetch_and_filter(
-            edhrec_client,
-            edhrec_cache_dir,
+            clients.edhrec,
+            clients.edhrec_cache_dir,
             EDHREC_CACHE_TTL,
             db,
             deck,
@@ -59,7 +65,7 @@ pub fn fetch_all<'a>(
         }
     }
 
-    match recommander::fetch_and_filter(recommander_client, db, deck) {
+    match recommander::fetch_and_filter(clients.recommander, db, deck) {
         Ok((recommendations, unresolved_names)) => {
             result.recommander_recommendations = recommendations;
             result.recommander_unresolved_names = unresolved_names;
@@ -199,31 +205,17 @@ mod tests {
         assert_eq!(resolved.len(), MAX_RECOMMENDATIONS_PER_SOURCE);
     }
 
-    struct FailingEdhrecClient;
-    impl edhrec::EdhrecClient for FailingEdhrecClient {
-        fn fetch(&self, _slug: &str) -> Result<String> {
-            anyhow::bail!("réseau indisponible")
-        }
-    }
+    use test_clients::{FailingClient, StubEdhrecClient, StubRecommanderClient};
 
-    struct FailingRecommanderClient;
-    impl recommander::RecommanderClient for FailingRecommanderClient {
-        fn fetch(&self, _body: &serde_json::Value) -> Result<String> {
-            anyhow::bail!("HTTP 429")
-        }
-    }
-
-    struct StubEdhrecClient(String);
-    impl edhrec::EdhrecClient for StubEdhrecClient {
-        fn fetch(&self, _slug: &str) -> Result<String> {
-            Ok(self.0.clone())
-        }
-    }
-
-    struct StubRecommanderClient(String);
-    impl recommander::RecommanderClient for StubRecommanderClient {
-        fn fetch(&self, _body: &serde_json::Value) -> Result<String> {
-            Ok(self.0.clone())
+    fn clients<'a>(
+        edhrec: &'a dyn edhrec::EdhrecClient,
+        recommander: &'a dyn recommander::RecommanderClient,
+        cache_dir: &'a tempfile::TempDir,
+    ) -> Clients<'a> {
+        Clients {
+            edhrec,
+            recommander,
+            edhrec_cache_dir: cache_dir.path(),
         }
     }
 
@@ -235,13 +227,16 @@ mod tests {
         })
         .to_string();
 
+        let cache_dir = dir_for_test();
         let result = fetch_all(
             &db,
             &green_deck(&[]),
             [],
-            &FailingEdhrecClient,
-            &StubRecommanderClient(recommander_json),
-            dir_for_test().path(),
+            clients(
+                &FailingClient,
+                &StubRecommanderClient(recommander_json),
+                &cache_dir,
+            ),
         );
 
         assert_eq!(result.source_errors.len(), 1);
@@ -265,13 +260,16 @@ mod tests {
         })
         .to_string();
 
+        let cache_dir = dir_for_test();
         let result = fetch_all(
             &db,
             &green_deck(&[]),
             [],
-            &FailingEdhrecClient,
-            &StubRecommanderClient(recommander_json),
-            dir_for_test().path(),
+            clients(
+                &FailingClient,
+                &StubRecommanderClient(recommander_json),
+                &cache_dir,
+            ),
         );
 
         let names: Vec<_> = result
@@ -285,13 +283,12 @@ mod tests {
     #[test]
     fn both_sources_failing_produce_two_source_errors() {
         let (_dir, db) = fixture_db();
+        let cache_dir = dir_for_test();
         let result = fetch_all(
             &db,
             &green_deck(&[]),
             [],
-            &FailingEdhrecClient,
-            &FailingRecommanderClient,
-            dir_for_test().path(),
+            clients(&FailingClient, &FailingClient, &cache_dir),
         );
         assert_eq!(result.source_errors.len(), 2);
         assert!(result.edhrec_recommendations.is_empty());
@@ -301,13 +298,16 @@ mod tests {
     #[test]
     fn malformed_json_produces_a_source_error() {
         let (_dir, db) = fixture_db();
+        let cache_dir = dir_for_test();
         let result = fetch_all(
             &db,
             &green_deck(&[]),
             [],
-            &StubEdhrecClient("not json".to_string()),
-            &FailingRecommanderClient,
-            dir_for_test().path(),
+            clients(
+                &StubEdhrecClient("not json".to_string()),
+                &FailingClient,
+                &cache_dir,
+            ),
         );
         assert_eq!(result.source_errors.len(), 2);
         assert_eq!(result.source_errors[0].source, "edhrec");
@@ -315,5 +315,56 @@ mod tests {
 
     fn dir_for_test() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()
+    }
+}
+
+/// Clients bouchonnés des Sources externes, partagés par les tests.
+#[cfg(test)]
+pub mod test_clients {
+    use anyhow::Result;
+
+    use super::edhrec::EdhrecClient;
+    use super::recommander::RecommanderClient;
+
+    /// Sert toujours le même JSON.
+    pub struct StubEdhrecClient(pub String);
+    impl EdhrecClient for StubEdhrecClient {
+        fn fetch(&self, _page: &str) -> Result<String> {
+            Ok(self.0.clone())
+        }
+    }
+
+    /// Sert toujours le même JSON.
+    pub struct StubRecommanderClient(pub String);
+    impl RecommanderClient for StubRecommanderClient {
+        fn fetch(&self, _body: &serde_json::Value) -> Result<String> {
+            Ok(self.0.clone())
+        }
+    }
+
+    /// Échoue comme une Source indisponible.
+    pub struct FailingClient;
+    impl EdhrecClient for FailingClient {
+        fn fetch(&self, _page: &str) -> Result<String> {
+            anyhow::bail!("HTTP 429")
+        }
+    }
+    impl RecommanderClient for FailingClient {
+        fn fetch(&self, _body: &serde_json::Value) -> Result<String> {
+            anyhow::bail!("HTTP 429")
+        }
+    }
+
+    /// Hors ligne : tout appel est une erreur de test.
+    pub struct OfflineClient;
+    impl EdhrecClient for OfflineClient {
+        fn fetch(&self, _page: &str) -> Result<String> {
+            panic!("hors ligne : EDHREC ne doit jamais être appelé")
+        }
+    }
+    impl RecommanderClient for OfflineClient {
+        fn fetch(&self, _body: &serde_json::Value) -> Result<String> {
+            panic!("hors ligne : Recommander ne doit jamais être appelé")
+        }
     }
 }

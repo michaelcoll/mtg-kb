@@ -34,42 +34,42 @@ pub fn origins_of(analysis: &AnalyzeResult, card_name: &str) -> Vec<Origin> {
 /// Renseigne les Origines de chaque Candidat et de chaque Recommandation
 /// externe, une fois toutes les listes connues.
 pub fn assign_origins(analysis: &mut AnalyzeResult) {
-    let candidates: Vec<_> = analysis
-        .candidates
-        .iter()
-        .map(|c| origins_of(analysis, &c.card.name))
-        .collect();
-    let edhrec: Vec<_> = analysis
-        .external
-        .edhrec_recommendations
-        .iter()
-        .map(|r| origins_of(analysis, &r.card.name))
-        .collect();
-    let recommander: Vec<_> = analysis
-        .external
-        .recommander_recommendations
-        .iter()
-        .map(|r| origins_of(analysis, &r.card.name))
-        .collect();
+    let origins_by_item = |cards: Vec<&str>| -> Vec<Vec<Origin>> {
+        cards
+            .into_iter()
+            .map(|name| origins_of(analysis, name))
+            .collect()
+    };
+    let external = &analysis.external;
+    let candidates = origins_by_item(names(&analysis.candidates, |c| &c.card.name));
+    let edhrec = origins_by_item(names(&external.edhrec_recommendations, |r| &r.card.name));
+    let recommander = origins_by_item(names(&external.recommander_recommendations, |r| {
+        &r.card.name
+    }));
 
-    for (c, o) in analysis.candidates.iter_mut().zip(candidates) {
-        c.origins = o;
-    }
-    for (r, o) in analysis
-        .external
-        .edhrec_recommendations
-        .iter_mut()
-        .zip(edhrec)
-    {
-        r.origins = o;
-    }
-    for (r, o) in analysis
-        .external
-        .recommander_recommendations
-        .iter_mut()
-        .zip(recommander)
-    {
-        r.origins = o;
+    set_origins(&mut analysis.candidates, candidates, |c| &mut c.origins);
+    let external = &mut analysis.external;
+    set_origins(&mut external.edhrec_recommendations, edhrec, |r| {
+        &mut r.origins
+    });
+    set_origins(
+        &mut external.recommander_recommendations,
+        recommander,
+        |r| &mut r.origins,
+    );
+}
+
+fn names<T>(items: &[T], name: impl Fn(&T) -> &String) -> Vec<&str> {
+    items.iter().map(|item| name(item).as_str()).collect()
+}
+
+fn set_origins<T>(
+    items: &mut [T],
+    origins: Vec<Vec<Origin>>,
+    slot: impl Fn(&mut T) -> &mut Vec<Origin>,
+) {
+    for (item, origins) in items.iter_mut().zip(origins) {
+        *slot(item) = origins;
     }
 }
 

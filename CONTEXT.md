@@ -78,7 +78,7 @@ Une stratégie transversale portée par des Cartes (tokens, compteurs +1/+1, ari
 _Avoid_: Archétype, tag, mécanique
 
 **Thème majeur**:
-Un Thème porté par au moins 8 Cartes du Deck (Commandant non compté), ou porté par le Commandant lui-même ; distingue une stratégie réellement construite d'un Thème tribal accidentel (2-3 Cartes qui partagent un sous-type sans que ce soit voulu). Seuls les Thèmes majeurs alimentent les Candidats.
+Un Thème porté par au moins 8 Cartes du Deck (Commandant non compté), ou détecté sur le texte du Commandant (les sous-types de sa seule ligne de type ne suffisent pas : un Thème tribal du Commandant exige que son texte oracle nomme le sous-type) ; distingue une stratégie réellement construite d'un Thème tribal accidentel (2-3 Cartes qui partagent un sous-type sans que ce soit voulu). Seuls les Thèmes majeurs alimentent les Candidats.
 _Avoid_: Thème dominant, archétype
 
 **Correction**:

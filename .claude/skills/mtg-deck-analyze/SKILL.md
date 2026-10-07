@@ -27,7 +27,7 @@ description: Analyzes a Commander Deck (kb analyze → Verdict and Suggestions �
    - `suggestions`: `[{"card_name": "…", "justification": "…", "card_to_remove": "…"}]`, a one-sentence justification, `card_to_remove` optional (a Card from the Deck).
 
 5. **Generate the Report**: `kb report <enriched json>` validates each Suggestion and writes `reports/<commander>-<date>.html`.
-   - Refusal: fix each Suggestion it names and rerun. A Game Changer beyond the Bracket limit is replaced by a Card outside the Game Changer list that fills the same need.
+   - Refusal: fix each Suggestion it names and rerun. Game Changers are counted after the swaps, Suggestion by Suggestion in order: a `card_to_remove` that is a Game Changer frees a slot, so a Game Changer swapped for a Game Changer is always accepted. A Game Changer refused for exceeding the Bracket limit is either given a Game Changer from the Deck as `card_to_remove`, or replaced by a Card outside the Game Changer list that fills the same need.
    - Swap warning: `Grep` the Report for `class="swap-warning"`. Each hit is a swap that drops a Role with a threshold below its minimum. For each one, pick another `card_to_remove` and regenerate, or keep the swap and say why in its `justification` (the Role is covered elsewhere, the Deck's plan does not need it).
 
 6. **Wrap-up**: give the Report path and list the Corrections set (Card, field, value, reason), or state that there were none.

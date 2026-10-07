@@ -1,11 +1,9 @@
-use std::path::Path;
-
 use anyhow::Result;
 
 use crate::analyze;
-use crate::analyze::external;
-use crate::analyze::external::edhrec::{EdhrecClient, HttpEdhrecClient};
-use crate::analyze::external::recommander::{HttpRecommanderClient, RecommanderClient};
+use crate::analyze::external::edhrec::HttpEdhrecClient;
+use crate::analyze::external::recommander::HttpRecommanderClient;
+use crate::analyze::external::{self, Clients};
 use crate::analyze::metrics::Thresholds;
 use crate::data_dir::edhrec_cache_dir;
 use crate::db::cards::CardsDb;
@@ -23,64 +21,34 @@ pub fn run(
     let input = decklist::read_source(source)?;
 
     let db = super::open_cards_db()?;
-    let result = analyze_deck_in_bracket(
-        &input,
-        &db,
-        thresholds,
-        bracket,
-        offline,
-        &HttpEdhrecClient,
-        &HttpRecommanderClient,
-        &edhrec_cache_dir(),
-    )?;
+    let cache_dir = edhrec_cache_dir();
+    let clients = Clients {
+        edhrec: &HttpEdhrecClient,
+        recommander: &HttpRecommanderClient,
+        edhrec_cache_dir: &cache_dir,
+    };
+    let result = analyze_deck(&input, &db, thresholds, bracket, offline, clients)?;
 
     print_json(&result)
 }
 
-/// Analyse sans Bracket.
-#[cfg(test)]
+/// Hors ligne, `clients` n'est jamais appelé.
 fn analyze_deck(
-    input: &str,
-    db: &CardsDb,
-    thresholds: &Thresholds,
-    offline: bool,
-    edhrec_client: &dyn EdhrecClient,
-    recommander_client: &dyn RecommanderClient,
-    edhrec_cache_dir: &Path,
-) -> Result<AnalyzeResult> {
-    analyze_deck_in_bracket(
-        input,
-        db,
-        thresholds,
-        None,
-        offline,
-        edhrec_client,
-        recommander_client,
-        edhrec_cache_dir,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn analyze_deck_in_bracket(
     input: &str,
     db: &CardsDb,
     thresholds: &Thresholds,
     bracket: Option<Bracket>,
     offline: bool,
-    edhrec_client: &dyn EdhrecClient,
-    recommander_client: &dyn RecommanderClient,
-    edhrec_cache_dir: &Path,
+    clients: Clients<'_>,
 ) -> Result<AnalyzeResult> {
-    let mut result = analyze::run_in_bracket(input, db, thresholds, bracket)?;
+    let mut result = analyze::run(input, db, thresholds, bracket)?;
 
     if !offline {
         result.external = external::fetch_all(
             db,
             &DeckContext::from_analysis(&result),
             &analyze::major_themes(&result.cards, &result.commander),
-            edhrec_client,
-            recommander_client,
-            edhrec_cache_dir,
+            clients,
         );
     }
     analyze::origins::assign_origins(&mut result);
@@ -91,9 +59,94 @@ fn analyze_deck_in_bracket(
 #[cfg(test)]
 mod personal_decklists;
 
+/// Aides partagées par les tests de `kb analyze`.
+#[cfg(test)]
+mod test_support {
+    use std::path::Path;
+
+    use super::*;
+    use crate::analyze::external::edhrec::EdhrecClient;
+    use crate::analyze::external::recommander::RecommanderClient;
+    use crate::analyze::external::test_clients::OfflineClient;
+    use crate::db::fixture::FixtureCard;
+
+    /// Terrain de base produisant `color`.
+    pub fn basic(uuid: &str, name: &str, color: &str) -> FixtureCard {
+        FixtureCard::new(uuid, name)
+            .types("Land")
+            .subtypes(name)
+            .supertypes("Basic")
+            .text(&format!("({{T}}: Add {{{color}}}.)"))
+            .identity(color)
+    }
+
+    /// `kb analyze --offline`, sans Bracket : tout appel réseau échoue le test.
+    pub fn analyze_offline(db: &CardsDb, input: &str, thresholds: &Thresholds) -> AnalyzeResult {
+        try_analyze_offline(db, input, thresholds).unwrap()
+    }
+
+    pub fn try_analyze_offline(
+        db: &CardsDb,
+        input: &str,
+        thresholds: &Thresholds,
+    ) -> Result<AnalyzeResult> {
+        let cache_dir = tempfile::tempdir().unwrap();
+        analyze_deck(
+            input,
+            db,
+            thresholds,
+            None,
+            true,
+            Clients {
+                edhrec: &OfflineClient,
+                recommander: &OfflineClient,
+                edhrec_cache_dir: cache_dir.path(),
+            },
+        )
+    }
+
+    /// `kb analyze` en ligne, avec les seuils par défaut.
+    pub fn analyze_online(
+        db: &CardsDb,
+        input: &str,
+        bracket: Option<Bracket>,
+        edhrec: &dyn EdhrecClient,
+        recommander: &dyn RecommanderClient,
+        edhrec_cache_dir: &Path,
+    ) -> AnalyzeResult {
+        analyze_deck(
+            input,
+            db,
+            &Thresholds::default(),
+            bracket,
+            false,
+            Clients {
+                edhrec,
+                recommander,
+                edhrec_cache_dir,
+            },
+        )
+        .unwrap()
+    }
+
+    /// Candidats terrains (Rôle faible « terrain »), dans l'ordre.
+    pub fn land_candidate_names(result: &AnalyzeResult) -> Vec<&str> {
+        result
+            .candidates
+            .iter()
+            .filter(|c| c.matched_weak_roles.iter().any(|r| r == "terrain"))
+            .map(|c| c.card.name.as_str())
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::test_support::{analyze_offline, analyze_online};
     use super::*;
+    use crate::analyze::external::test_clients::{
+        FailingClient, StubEdhrecClient, StubRecommanderClient,
+    };
     use crate::db::fixture::{CardsFixture, FixtureCard};
     use crate::model::Origin;
 
@@ -124,34 +177,10 @@ mod tests {
         "Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n99 Forest\n".to_string()
     }
 
-    struct PanicIfCalledEdhrecClient;
-    impl EdhrecClient for PanicIfCalledEdhrecClient {
-        fn fetch(&self, _slug: &str) -> Result<String> {
-            panic!("--offline ne doit jamais appeler EDHREC")
-        }
-    }
-
-    struct PanicIfCalledRecommanderClient;
-    impl RecommanderClient for PanicIfCalledRecommanderClient {
-        fn fetch(&self, _body: &serde_json::Value) -> Result<String> {
-            panic!("--offline ne doit jamais appeler Recommander")
-        }
-    }
-
     #[test]
     fn offline_never_calls_external_clients_and_leaves_lists_empty() {
         let (_dir, db) = fixture_db();
-        let cache_dir = tempfile::tempdir().unwrap();
-        let result = analyze_deck(
-            &deck_input(),
-            &db,
-            &Thresholds::default(),
-            true,
-            &PanicIfCalledEdhrecClient,
-            &PanicIfCalledRecommanderClient,
-            cache_dir.path(),
-        )
-        .unwrap();
+        let result = analyze_offline(&db, &deck_input(), &Thresholds::default());
 
         assert!(result.external.edhrec_recommendations.is_empty());
         assert!(result.external.recommander_recommendations.is_empty());
@@ -163,17 +192,7 @@ mod tests {
     #[test]
     fn json_keys_are_flat_and_in_the_documented_order() {
         let (_dir, db) = fixture_db();
-        let cache_dir = tempfile::tempdir().unwrap();
-        let result = analyze_deck(
-            &deck_input(),
-            &db,
-            &Thresholds::default(),
-            true,
-            &PanicIfCalledEdhrecClient,
-            &PanicIfCalledRecommanderClient,
-            cache_dir.path(),
-        )
-        .unwrap();
+        let result = analyze_offline(&db, &deck_input(), &Thresholds::default());
 
         let json = serde_json::to_string(&result).unwrap();
         assert_eq!(
@@ -236,7 +255,7 @@ mod tests {
     #[test]
     fn a_json_without_external_source_keys_still_parses() {
         let (_dir, db) = fixture_db();
-        let result = analyze::run(&deck_input(), &db, &Thresholds::default()).unwrap();
+        let result = analyze::run(&deck_input(), &db, &Thresholds::default(), None).unwrap();
         let mut json = serde_json::to_value(&result).unwrap();
         let object = json.as_object_mut().unwrap();
         for key in [
@@ -259,27 +278,13 @@ mod tests {
             min_ramp: 3,
             ..Thresholds::default()
         };
-        let result = analyze::run(&deck_input(), &db, &custom).unwrap();
+        let result = analyze::run(&deck_input(), &db, &custom, None).unwrap();
         let mut json = serde_json::to_value(&result).unwrap();
         assert_eq!(json["thresholds"]["min_ramp"], 3);
         json.as_object_mut().unwrap().remove("thresholds");
 
         let parsed: AnalyzeResult = serde_json::from_value(json).unwrap();
         assert_eq!(parsed.thresholds, Thresholds::default());
-    }
-
-    struct StubEdhrecClient(String);
-    impl EdhrecClient for StubEdhrecClient {
-        fn fetch(&self, _slug: &str) -> Result<String> {
-            Ok(self.0.clone())
-        }
-    }
-
-    struct StubRecommanderClient(String);
-    impl RecommanderClient for StubRecommanderClient {
-        fn fetch(&self, _body: &serde_json::Value) -> Result<String> {
-            Ok(self.0.clone())
-        }
     }
 
     #[test]
@@ -299,16 +304,14 @@ mod tests {
         })
         .to_string();
 
-        let result = analyze_deck(
-            &deck_input(),
+        let result = analyze_online(
             &db,
-            &Thresholds::default(),
-            false,
+            &deck_input(),
+            None,
             &StubEdhrecClient(edhrec_json),
             &StubRecommanderClient(recommander_json),
             cache_dir.path(),
-        )
-        .unwrap();
+        );
 
         assert_eq!(result.external.edhrec_recommendations.len(), 1);
         assert_eq!(result.external.recommander_recommendations.len(), 1);
@@ -376,16 +379,14 @@ mod tests {
         let input =
             "Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n1 Bala Ged Recovery\n98 Forest\n";
 
-        let result = analyze_deck(
-            input,
+        let result = analyze_online(
             &db,
-            &Thresholds::default(),
-            false,
+            input,
+            None,
             &StubEdhrecClient(edhrec_json),
             &StubRecommanderClient(r#"{"data": {"recommendations": []}}"#.to_string()),
             cache_dir.path(),
-        )
-        .unwrap();
+        );
         let json = serde_json::to_value(&result).unwrap();
 
         assert_eq!(
@@ -432,6 +433,7 @@ mod tests {
             "Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n99 Forest\n",
             &db,
             &Thresholds::default(),
+            None,
         )
         .unwrap();
         let mut json = serde_json::to_value(&result).unwrap();
@@ -481,16 +483,14 @@ mod tests {
     fn a_card_in_candidates_and_edhrec_carries_both_origins_in_both_lists() {
         let (_dir, db) = fixture_db();
         let cache_dir = tempfile::tempdir().unwrap();
-        let result = analyze_deck(
-            &deck_input(),
+        let result = analyze_online(
             &db,
-            &Thresholds::default(),
-            false,
+            &deck_input(),
+            None,
             &StubEdhrecClient(edhrec_json_with(&["Rampant Growth", "Cultivate"])),
             &StubRecommanderClient(recommander_json_with(&["Cultivate"])),
             cache_dir.path(),
-        )
-        .unwrap();
+        );
 
         let candidate = result
             .candidates
@@ -527,16 +527,14 @@ mod tests {
     fn a_card_in_a_single_list_carries_a_single_origin() {
         let (_dir, db) = fixture_db();
         let cache_dir = tempfile::tempdir().unwrap();
-        let result = analyze_deck(
-            &deck_input(),
+        let result = analyze_online(
             &db,
-            &Thresholds::default(),
-            false,
+            &deck_input(),
+            None,
             &StubEdhrecClient(edhrec_json_with(&["Cultivate"])),
             &StubRecommanderClient(recommander_json_with(&[])),
             cache_dir.path(),
-        )
-        .unwrap();
+        );
 
         assert_eq!(
             origins_by_name(
@@ -562,17 +560,7 @@ mod tests {
     #[test]
     fn offline_candidates_only_have_origin_kb() {
         let (_dir, db) = fixture_db();
-        let cache_dir = tempfile::tempdir().unwrap();
-        let result = analyze_deck(
-            &deck_input(),
-            &db,
-            &Thresholds::default(),
-            true,
-            &PanicIfCalledEdhrecClient,
-            &PanicIfCalledRecommanderClient,
-            cache_dir.path(),
-        )
-        .unwrap();
+        let result = analyze_offline(&db, &deck_input(), &Thresholds::default());
 
         assert!(!result.candidates.is_empty());
         assert!(result.candidates.iter().all(|c| c.origins == [Origin::Kb]));
@@ -582,16 +570,14 @@ mod tests {
     fn a_json_without_origins_still_parses() {
         let (_dir, db) = fixture_db();
         let cache_dir = tempfile::tempdir().unwrap();
-        let result = analyze_deck(
-            &deck_input(),
+        let result = analyze_online(
             &db,
-            &Thresholds::default(),
-            false,
+            &deck_input(),
+            None,
             &StubEdhrecClient(edhrec_json_with(&["Cultivate"])),
             &StubRecommanderClient(recommander_json_with(&["Cultivate"])),
             cache_dir.path(),
-        )
-        .unwrap();
+        );
         let mut json = serde_json::to_value(&result).unwrap();
         for list in [
             "candidates",
@@ -645,16 +631,14 @@ mod tests {
         })
         .to_string();
 
-        let result = analyze_deck(
-            &deck_input(),
+        let result = analyze_online(
             &db,
-            &Thresholds::default(),
-            false,
+            &deck_input(),
+            None,
             &StubEdhrecClient(edhrec_json),
             &StubRecommanderClient(r#"{"data": {"recommendations": []}}"#.to_string()),
             cache_dir.path(),
-        )
-        .unwrap();
+        );
 
         let names: Vec<&str> = result
             .external
@@ -677,29 +661,14 @@ mod tests {
     fn a_failing_source_is_reported_without_failing_the_whole_analysis() {
         let (_dir, db) = fixture_db();
         let cache_dir = tempfile::tempdir().unwrap();
-
-        struct FailingClient;
-        impl EdhrecClient for FailingClient {
-            fn fetch(&self, _slug: &str) -> Result<String> {
-                anyhow::bail!("HTTP 429")
-            }
-        }
-        impl RecommanderClient for FailingClient {
-            fn fetch(&self, _body: &serde_json::Value) -> Result<String> {
-                anyhow::bail!("HTTP 429")
-            }
-        }
-
-        let result = analyze_deck(
-            &deck_input(),
+        let result = analyze_online(
             &db,
-            &Thresholds::default(),
-            false,
+            &deck_input(),
+            None,
             &FailingClient,
             &FailingClient,
             cache_dir.path(),
-        )
-        .unwrap();
+        );
 
         assert_eq!(result.external.source_errors.len(), 2);
         assert!(result.external.edhrec_recommendations.is_empty());
@@ -746,19 +715,9 @@ mod tests {
                     .text("Search your library for an instant or sorcery card, reveal it, then shuffle and put that card on top."),
             ])
             .build();
-        let cache_dir = tempfile::tempdir().unwrap();
         let input = "Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n\
                      1 Demonic Tutor\n1 Regrowth\n1 Counterspell\n1 Rest in Peace\n95 Forest\n";
-        let result = analyze_deck(
-            input,
-            &db,
-            &Thresholds::default(),
-            true,
-            &PanicIfCalledEdhrecClient,
-            &PanicIfCalledRecommanderClient,
-            cache_dir.path(),
-        )
-        .unwrap();
+        let result = analyze_offline(&db, input, &Thresholds::default());
 
         for role in ["tutor", "recursion", "contresort", "grave_hate"] {
             assert_eq!(result.role_counts.get(role), Some(&1), "{role}");
@@ -791,8 +750,11 @@ mod tests {
 mod theme_pages_tests {
     use std::cell::RefCell;
     use std::collections::HashMap;
+    use std::path::Path;
 
     use super::*;
+    use crate::analyze::external::edhrec::EdhrecClient;
+    use crate::analyze::external::test_clients::StubRecommanderClient;
     use crate::db::fixture::{CardsFixture, FixtureCard};
 
     /// Client EDHREC bouchonné : sert le JSON de chaque page connue,
@@ -824,11 +786,8 @@ mod theme_pages_tests {
         }
     }
 
-    struct EmptyRecommander;
-    impl RecommanderClient for EmptyRecommander {
-        fn fetch(&self, _body: &serde_json::Value) -> Result<String> {
-            Ok(r#"{"data": {"recommendations": []}}"#.to_string())
-        }
+    fn empty_recommander() -> StubRecommanderClient {
+        StubRecommanderClient(r#"{"data": {"recommendations": []}}"#.to_string())
     }
 
     fn edhrec_json(names: &[&str]) -> String {
@@ -844,8 +803,9 @@ mod theme_pages_tests {
         .to_string()
     }
 
-    /// Krenko porte les Thèmes `tokens` et `tribal:Goblin` (dans la table) et
-    /// `tribal:Homunculus` (absent de la table), majeurs d'office.
+    /// Le texte de Krenko porte les Thèmes `tokens` et `tribal:Goblin` (dans
+    /// la table), majeurs d'office ; `tribal:Homunculus`, de sa seule ligne de
+    /// type, ne l'est pas.
     fn fixture_db(extra: impl IntoIterator<Item = FixtureCard>) -> (tempfile::TempDir, CardsDb) {
         CardsFixture::new()
             .cards([
@@ -877,16 +837,7 @@ mod theme_pages_tests {
     const DECK: &str = "Commander\n1 Krenko, Mob Boss\n\nDeck\n99 Mountain\n";
 
     fn analyze_online(db: &CardsDb, client: &PagesClient, cache_dir: &Path) -> AnalyzeResult {
-        analyze_deck(
-            DECK,
-            db,
-            &Thresholds::default(),
-            false,
-            client,
-            &EmptyRecommander,
-            cache_dir,
-        )
-        .unwrap()
+        super::test_support::analyze_online(db, DECK, None, client, &empty_recommander(), cache_dir)
     }
 
     #[test]
@@ -1023,10 +974,13 @@ mod theme_pages_tests {
             DECK,
             &db,
             &Thresholds::default(),
+            None,
             true,
-            &client,
-            &EmptyRecommander,
-            cache_dir.path(),
+            Clients {
+                edhrec: &client,
+                recommander: &empty_recommander(),
+                edhrec_cache_dir: cache_dir.path(),
+            },
         )
         .unwrap();
 
@@ -1038,17 +992,9 @@ mod theme_pages_tests {
 /// Terrains Candidats quand la base de mana est insuffisante (#90).
 #[cfg(test)]
 mod land_candidates_tests {
+    use super::test_support::{basic, land_candidate_names};
     use super::*;
     use crate::db::fixture::{CardsFixture, FixtureCard};
-
-    fn basic(uuid: &str, name: &str, color: &str) -> FixtureCard {
-        FixtureCard::new(uuid, name)
-            .types("Land")
-            .subtypes(name)
-            .supertypes("Basic")
-            .text(&format!("({{T}}: Add {{{color}}}.)"))
-            .identity(color)
-    }
 
     fn dual(uuid: &str, name: &str, identity: &str) -> FixtureCard {
         FixtureCard::new(uuid, name)
@@ -1081,42 +1027,9 @@ mod land_candidates_tests {
             .build()
     }
 
-    struct NoEdhrec;
-    impl EdhrecClient for NoEdhrec {
-        fn fetch(&self, _slug: &str) -> Result<String> {
-            panic!("--offline ne doit jamais appeler EDHREC")
-        }
-    }
-
-    struct NoRecommander;
-    impl RecommanderClient for NoRecommander {
-        fn fetch(&self, _body: &serde_json::Value) -> Result<String> {
-            panic!("--offline ne doit jamais appeler Recommander")
-        }
-    }
-
     fn analyze_offline(db: &CardsDb, forests: u32) -> AnalyzeResult {
-        let cache_dir = tempfile::tempdir().unwrap();
         let input = format!("Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n{forests} Forest\n");
-        analyze_deck(
-            &input,
-            db,
-            &Thresholds::default(),
-            true,
-            &NoEdhrec,
-            &NoRecommander,
-            cache_dir.path(),
-        )
-        .unwrap()
-    }
-
-    fn land_candidate_names(result: &AnalyzeResult) -> Vec<&str> {
-        result
-            .candidates
-            .iter()
-            .filter(|c| c.matched_weak_roles.iter().any(|r| r == "terrain"))
-            .map(|c| c.card.name.as_str())
-            .collect()
+        super::test_support::analyze_offline(db, &input, &Thresholds::default())
     }
 
     #[test]
@@ -1169,8 +1082,8 @@ mod land_candidates_tests {
 #[cfg(test)]
 mod bracket_tests {
     use super::*;
+    use crate::analyze::external::test_clients::{StubEdhrecClient, StubRecommanderClient};
     use crate::db::fixture::{CardsFixture, FixtureCard};
-    use crate::model::Bracket;
 
     const DECK_GAME_CHANGERS: [&str; 3] = ["Demonic Tutor", "Cyclonic Rift", "Smothering Tithe"];
 
@@ -1222,7 +1135,7 @@ mod bracket_tests {
         input
     }
 
-    fn recommending_both_ramps() -> (StubEdhrec, StubRecommander) {
+    fn recommending_both_ramps() -> (StubEdhrecClient, StubRecommanderClient) {
         let edhrec = serde_json::json!({
             "container": {"json_dict": {"cardlists": [
                 {"header": "Top Cards", "cardviews": [
@@ -1238,40 +1151,23 @@ mod bracket_tests {
             ]}
         });
         (
-            StubEdhrec(edhrec.to_string()),
-            StubRecommander(recommander.to_string()),
+            StubEdhrecClient(edhrec.to_string()),
+            StubRecommanderClient(recommander.to_string()),
         )
-    }
-
-    struct StubEdhrec(String);
-    impl EdhrecClient for StubEdhrec {
-        fn fetch(&self, _slug: &str) -> Result<String> {
-            Ok(self.0.clone())
-        }
-    }
-
-    struct StubRecommander(String);
-    impl RecommanderClient for StubRecommander {
-        fn fetch(&self, _body: &serde_json::Value) -> Result<String> {
-            Ok(self.0.clone())
-        }
     }
 
     fn analyze_in(bracket: Option<u8>, game_changers_in_deck: usize) -> AnalyzeResult {
         let (_dir, db) = fixture_db();
         let cache_dir = tempfile::tempdir().unwrap();
         let (edhrec, recommander) = recommending_both_ramps();
-        analyze_deck_in_bracket(
-            &deck_with_game_changers(game_changers_in_deck),
+        super::test_support::analyze_online(
             &db,
-            &Thresholds::default(),
+            &deck_with_game_changers(game_changers_in_deck),
             bracket.map(|b| Bracket::try_from(b).unwrap()),
-            false,
             &edhrec,
             &recommander,
             cache_dir.path(),
         )
-        .unwrap()
     }
 
     /// Noms proposés, toutes listes confondues : Candidats, EDHREC, Recommander.
@@ -1395,17 +1291,9 @@ mod bracket_tests {
 /// corrigent (#95).
 #[cfg(test)]
 mod undersupplied_color_tests {
+    use super::test_support::{analyze_offline, basic, land_candidate_names};
     use super::*;
     use crate::db::fixture::{CardsFixture, FixtureCard};
-
-    fn basic(uuid: &str, name: &str, color: &str) -> FixtureCard {
-        FixtureCard::new(uuid, name)
-            .types("Land")
-            .subtypes(name)
-            .supertypes("Basic")
-            .text(&format!("({{T}}: Add {{{color}}}.)"))
-            .identity(color)
-    }
 
     fn land(uuid: &str, name: &str, text: &str, identity: &str) -> FixtureCard {
         FixtureCard::new(uuid, name)
@@ -1440,34 +1328,6 @@ mod undersupplied_color_tests {
                 land("pool", "Breeding Pool", "{T}: Add {G} or {U}.", "G, U"),
             ])
             .build()
-    }
-
-    struct NoEdhrec;
-    impl EdhrecClient for NoEdhrec {
-        fn fetch(&self, _slug: &str) -> Result<String> {
-            panic!("--offline ne doit jamais appeler EDHREC")
-        }
-    }
-
-    struct NoRecommander;
-    impl RecommanderClient for NoRecommander {
-        fn fetch(&self, _body: &serde_json::Value) -> Result<String> {
-            panic!("--offline ne doit jamais appeler Recommander")
-        }
-    }
-
-    fn analyze_offline(db: &CardsDb, input: &str, thresholds: &Thresholds) -> AnalyzeResult {
-        let cache_dir = tempfile::tempdir().unwrap();
-        analyze_deck(
-            input,
-            db,
-            thresholds,
-            true,
-            &NoEdhrec,
-            &NoRecommander,
-            cache_dir.path(),
-        )
-        .unwrap()
     }
 
     /// Deck Simic : le Commandant porte 50 % de symboles G et 50 % de U.
@@ -1551,15 +1411,6 @@ mod undersupplied_color_tests {
             "{:?}",
             result.weaknesses
         );
-    }
-
-    fn land_candidate_names(result: &AnalyzeResult) -> Vec<&str> {
-        result
-            .candidates
-            .iter()
-            .filter(|c| c.matched_weak_roles.iter().any(|r| r == "terrain"))
-            .map(|c| c.card.name.as_str())
-            .collect()
     }
 
     #[test]

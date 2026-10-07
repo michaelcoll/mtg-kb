@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use anyhow::Result;
 
 use super::PrintingLookup;
@@ -5,13 +7,19 @@ use crate::deck_context::{DeckContext, Ineligible};
 use crate::model::EnrichedAnalysis;
 
 /// Par Suggestion : Carte inconnue, sinon première règle d'éligibilité
-/// enfreinte, plus une Carte à retirer absente du Deck. Une erreur de la Base
-/// cartes n'est pas une violation : elle est propagée.
+/// enfreinte, plus une Carte à retirer absente du Deck. Les Game Changers sont
+/// comptés après les échanges, Suggestion par Suggestion dans l'ordre : une
+/// Carte à retirer Game Changer libère une place, et chaque Suggestion Game
+/// Changer acceptée en prend une. Une erreur de la Base cartes n'est pas une
+/// violation : elle est propagée.
 pub(super) fn validate_suggestions(
     enriched: &EnrichedAnalysis,
     lookup: &dyn PrintingLookup,
 ) -> Result<Vec<String>> {
     let deck = DeckContext::from_analysis(&enriched.analysis);
+    let tally = deck.game_changer_tally();
+    let mut game_changers = tally.in_deck.len();
+    let mut removed_game_changers: HashSet<&str> = HashSet::new();
 
     let mut violations = Vec::new();
     let push = |violations: &mut Vec<String>, name: &str, rule: &str| {
@@ -26,21 +34,33 @@ pub(super) fn validate_suggestions(
             continue;
         };
 
-        if let Err(ineligible) = deck.eligibility(&card) {
-            let rule = match ineligible {
-                Ineligible::AlreadyInDeck => "Carte déjà présente dans le Deck.".to_string(),
-                Ineligible::GameChangerOverLimit => format!(
-                    "Game Changer au-delà de la limite du Bracket {} ({} Game Changers dans le Deck, {} autorisés).",
-                    deck.bracket().map_or_else(String::new, |b| b.to_string()),
-                    deck.game_changers().len(),
-                    deck.game_changer_limit().unwrap_or_default(),
-                ),
-                Ineligible::Illegal => "Carte non légale en Commander.".to_string(),
-                Ineligible::OutsideIdentity => {
-                    "hors de l'Identité de couleur du Commandant.".to_string()
-                }
-            };
-            push(&mut violations, name, &rule);
+        let removed_game_changer = suggestion.card_to_remove.as_deref().filter(|removed| {
+            tally.in_deck.iter().any(|gc| gc == removed) && !removed_game_changers.contains(removed)
+        });
+        let game_changers_after = game_changers + usize::from(card.game_changer)
+            - usize::from(removed_game_changer.is_some());
+
+        match deck.eligibility_after_swaps(&card, game_changers_after) {
+            Ok(()) => {
+                game_changers = game_changers_after;
+                removed_game_changers.extend(removed_game_changer);
+            }
+            Err(ineligible) => {
+                let rule = match ineligible {
+                    Ineligible::AlreadyInDeck => "Carte déjà présente dans le Deck.".to_string(),
+                    Ineligible::GameChangerOverLimit => format!(
+                        "Game Changer au-delà de la limite du Bracket {} ({} Game Changers dans le Deck après les échanges, {} autorisés).",
+                        tally.bracket.map_or_else(String::new, |b| b.to_string()),
+                        game_changers_after,
+                        tally.limit.unwrap_or_default(),
+                    ),
+                    Ineligible::Illegal => "Carte non légale en Commander.".to_string(),
+                    Ineligible::OutsideIdentity => {
+                        "hors de l'Identité de couleur du Commandant.".to_string()
+                    }
+                };
+                push(&mut violations, name, &rule);
+            }
         }
 
         if let Some(card_to_remove) = &suggestion.card_to_remove

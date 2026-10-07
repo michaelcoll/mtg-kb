@@ -21,16 +21,10 @@ const REQUIRED_DECK_SIZE: u32 = 100;
 
 pub(crate) const MAJOR_THEME_MIN_CARDS: u32 = 8;
 
-/// Analyse sans Bracket.
-#[cfg(test)]
-pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Result<AnalyzeResult> {
-    run_in_bracket(input, db, thresholds, None)
-}
-
 /// Erreur uniquement si le Commandant est ambigu (0 ou 2+) : Cartes non
 /// résolues et écarts de validation sont reportés dans le résultat. Le
 /// Bracket, facultatif, limite les Game Changers proposés.
-pub fn run_in_bracket(
+pub fn run(
     input: &str,
     db: &CardsDb,
     thresholds: &metrics::Thresholds,
@@ -86,7 +80,7 @@ pub fn run_in_bracket(
         ));
     }
 
-    let deck = DeckContext::new(&commander, cards.iter().map(|c| &c.card)).in_bracket(bracket);
+    let deck = DeckContext::new(&commander, cards.iter().map(|c| &c.card)).with_bracket(bracket);
     for resolved in &cards {
         if resolved.quantity > 1 && !resolved.card.is_basic_land() {
             construction_errors.push(format!(
@@ -108,13 +102,13 @@ pub fn run_in_bracket(
         }
     }
 
-    if let (Some(bracket), Some(limit)) = (deck.bracket(), deck.game_changer_limit())
-        && deck.game_changers().len() > limit
+    let tally = deck.game_changer_tally();
+    if let (true, Some(bracket), Some(limit)) = (tally.is_over_limit(), tally.bracket, tally.limit)
     {
         weaknesses.push(format!(
             "Game Changers au-delà de la limite du Bracket {bracket} : {} pour {limit} autorisé(s) ({})",
-            deck.game_changers().len(),
-            deck.game_changers().join(", ")
+            tally.in_deck.len(),
+            tally.in_deck.join(", ")
         ));
     }
 
@@ -146,18 +140,17 @@ pub fn run_in_bracket(
 
     let synergies = find_synergies(&cards);
 
-    let major_themes = major_themes(&cards, &commander);
-    let weak_roles = metrics::weak_role_names(&role_counts, thresholds);
-    let undersupplied_colors =
-        metrics::undersupplied_colors(&mana_base, &commander.color_identity, thresholds);
-    let candidates = candidates::find_candidates(
-        db,
-        &deck,
-        &major_themes,
-        &weak_roles,
-        &undersupplied_colors,
+    let needs = candidates::DeckNeeds {
+        major_themes: major_themes(&cards, &commander),
+        weak_roles: metrics::weak_role_names(&role_counts, thresholds),
+        undersupplied_colors: metrics::undersupplied_colors(
+            &mana_base,
+            &commander.color_identity,
+            thresholds,
+        ),
         tie_break,
-    )?;
+    };
+    let candidates = candidates::find_candidates(db, &deck, &needs)?;
 
     Ok(AnalyzeResult {
         commander,
@@ -179,9 +172,9 @@ pub fn run_in_bracket(
 }
 
 /// Thèmes majeurs du Deck : portés par au moins `MAJOR_THEME_MIN_CARDS`
-/// Cartes du Deck, ou par le Commandant. Le Commandant ne compte pas dans le
-/// seuil, mais ses propres Thèmes (Corrections comprises) sont majeurs
-/// d'office.
+/// Cartes du Deck, ou détectés sur le texte du Commandant
+/// (`themes::commander_themes`, Corrections comprises), majeurs d'office. Le
+/// Commandant ne compte pas dans le seuil.
 pub fn major_themes(cards: &[ResolvedCard], commander: &Card) -> HashSet<String> {
     let mut theme_counts: BTreeMap<String, u32> = BTreeMap::new();
     for resolved in cards {
@@ -193,7 +186,7 @@ pub fn major_themes(cards: &[ResolvedCard], commander: &Card) -> HashSet<String>
         .into_iter()
         .filter(|(_, count)| *count >= MAJOR_THEME_MIN_CARDS)
         .map(|(theme, _)| theme)
-        .chain(themes::detect_themes(commander))
+        .chain(themes::commander_themes(commander))
         .collect()
 }
 
@@ -283,7 +276,13 @@ mod tests {
     #[test]
     fn errors_when_no_commander() {
         let (_dir, db) = fixture_db();
-        let err = run("Deck\n1 Sol Ring\n", &db, &metrics::Thresholds::default()).unwrap_err();
+        let err = run(
+            "Deck\n1 Sol Ring\n",
+            &db,
+            &metrics::Thresholds::default(),
+            None,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("aucun Commandant"));
     }
 
@@ -291,7 +290,7 @@ mod tests {
     fn errors_when_two_commanders() {
         let (_dir, db) = fixture_db();
         let input = "Commander\n1 Atraxa, Praetors' Voice\n1 Sol Ring\n\nDeck\n";
-        let err = run(input, &db, &metrics::Thresholds::default()).unwrap_err();
+        let err = run(input, &db, &metrics::Thresholds::default(), None).unwrap_err();
         assert!(err.to_string().contains("exactement un Commandant"));
     }
 
@@ -299,7 +298,7 @@ mod tests {
     fn reports_unresolved_cards_without_failing() {
         let (_dir, db) = fixture_db();
         let input = deck_of(98, "1 Some Unknown Card\n");
-        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
+        let result = run(&input, &db, &metrics::Thresholds::default(), None).unwrap();
         assert_eq!(result.unresolved.len(), 1);
         assert_eq!(result.unresolved[0].name, "Some Unknown Card");
     }
@@ -308,7 +307,7 @@ mod tests {
     fn flags_wrong_deck_size() {
         let (_dir, db) = fixture_db();
         let input = deck_of(10, "");
-        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
+        let result = run(&input, &db, &metrics::Thresholds::default(), None).unwrap();
         assert!(
             result
                 .construction_errors
@@ -321,7 +320,7 @@ mod tests {
     fn allows_many_basic_lands_but_not_duplicate_nonland() {
         let (_dir, db) = fixture_db();
         let input = deck_of(97, "2 Sol Ring\n");
-        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
+        let result = run(&input, &db, &metrics::Thresholds::default(), None).unwrap();
         assert!(
             !result
                 .construction_errors
@@ -341,7 +340,7 @@ mod tests {
         let (_dir, db) = fixture_db();
         // Atraxa is WUBG; Shock is red-identity, out of Commander's colors.
         let input = deck_of(97, "1 Shock\n");
-        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
+        let result = run(&input, &db, &metrics::Thresholds::default(), None).unwrap();
         assert!(
             result
                 .construction_errors
@@ -354,7 +353,7 @@ mod tests {
     fn flags_illegal_card_as_weakness() {
         let (_dir, db) = fixture_db();
         let input = deck_of(97, "1 Black Lotus\n");
-        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
+        let result = run(&input, &db, &metrics::Thresholds::default(), None).unwrap();
         assert!(
             result
                 .weaknesses
@@ -367,7 +366,7 @@ mod tests {
     fn valid_100_card_deck_has_no_construction_errors() {
         let (_dir, db) = fixture_db();
         let input = deck_of(98, "1 Sol Ring\n");
-        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
+        let result = run(&input, &db, &metrics::Thresholds::default(), None).unwrap();
         assert_eq!(result.card_count, 100);
         assert!(
             result.construction_errors.is_empty(),
@@ -380,7 +379,7 @@ mod tests {
     fn mostly_lands_deck_reports_ramp_and_draw_weaknesses() {
         let (_dir, db) = fixture_db();
         let input = deck_of(98, "1 Sol Ring\n");
-        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
+        let result = run(&input, &db, &metrics::Thresholds::default(), None).unwrap();
         assert!(
             result
                 .weaknesses
@@ -449,7 +448,13 @@ mod tests {
     #[test]
     fn role_corrections_feed_role_counts_and_weaknesses() {
         let (_dir, db) = fixture_db_for_corrections();
-        let result = run(&corrected_deck(), &db, &metrics::Thresholds::default()).unwrap();
+        let result = run(
+            &corrected_deck(),
+            &db,
+            &metrics::Thresholds::default(),
+            None,
+        )
+        .unwrap();
         assert_eq!(
             result.role_counts.get("wipe"),
             Some(&1),
@@ -467,7 +472,13 @@ mod tests {
             ("Swarmyard Massacre", roles(&["wipe", "grave_hate"])),
             ("Drudge Spell", roles(&[])),
         ]));
-        let result = run(&corrected_deck(), &db, &metrics::Thresholds::default()).unwrap();
+        let result = run(
+            &corrected_deck(),
+            &db,
+            &metrics::Thresholds::default(),
+            None,
+        )
+        .unwrap();
         assert_eq!(result.role_counts.get("wipe"), Some(&2));
         assert_eq!(result.role_counts.get("grave_hate"), Some(&1));
         assert!(
@@ -498,7 +509,7 @@ mod tests {
     fn role_corrections_apply_to_candidates() {
         let (_dir, db) = fixture_db_for_corrections();
         let deck = deck_of(98, "1 Crippling Fear\n");
-        let result = run(&deck, &db, &metrics::Thresholds::default()).unwrap();
+        let result = run(&deck, &db, &metrics::Thresholds::default(), None).unwrap();
         assert!(
             result
                 .candidates
@@ -510,7 +521,7 @@ mod tests {
             ("Saproling Burst", roles(&[])),
             ("Swarmyard Massacre", roles(&["wipe"])),
         ]));
-        let result = run(&deck, &db, &metrics::Thresholds::default()).unwrap();
+        let result = run(&deck, &db, &metrics::Thresholds::default(), None).unwrap();
         let names: Vec<_> = result
             .candidates
             .iter()
@@ -531,7 +542,13 @@ mod tests {
             ("Drudge Spell", banned.clone()),
             ("Saproling Burst", banned),
         ]));
-        let result = run(&corrected_deck(), &db, &metrics::Thresholds::default()).unwrap();
+        let result = run(
+            &corrected_deck(),
+            &db,
+            &metrics::Thresholds::default(),
+            None,
+        )
+        .unwrap();
         assert!(
             result
                 .weaknesses
@@ -589,7 +606,7 @@ mod tests {
         let (_dir, db, goblin_lines) = fixture_db_with_goblin_pool(3);
         let input =
             format!("Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n95 Forest\n{goblin_lines}");
-        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
+        let result = run(&input, &db, &metrics::Thresholds::default(), None).unwrap();
 
         assert!(
             !result
@@ -605,7 +622,7 @@ mod tests {
         let (_dir, db, goblin_lines) = fixture_db_with_goblin_pool(8);
         let input =
             format!("Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n90 Forest\n{goblin_lines}");
-        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
+        let result = run(&input, &db, &metrics::Thresholds::default(), None).unwrap();
 
         let raider = result
             .candidates
@@ -634,7 +651,7 @@ mod tests {
             .build();
         let input =
             format!("Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n90 Forest\n{deck_lines}");
-        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
+        let result = run(&input, &db, &metrics::Thresholds::default(), None).unwrap();
 
         let score_of = |name: &str| {
             let candidate = result
@@ -684,7 +701,7 @@ mod tests {
             .build();
         let input =
             format!("Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n90 Forest\n{deck_lines}");
-        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
+        let result = run(&input, &db, &metrics::Thresholds::default(), None).unwrap();
 
         let inspector = result
             .candidates
@@ -710,7 +727,7 @@ mod tests {
             .cards(grunts)
             .build();
         let input = format!("Commander\n1 Goblin Warlord\n\nDeck\n91 Forest\n{deck_lines}");
-        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
+        let result = run(&input, &db, &metrics::Thresholds::default(), None).unwrap();
 
         assert!(
             !result
@@ -721,19 +738,26 @@ mod tests {
         );
     }
 
+    /// Commandant Gobelin dont le texte oracle nomme les Gobelins.
+    fn goblin_lord_commander() -> FixtureCard {
+        goblin("goblin-commander", "Goblin Warlord", "R")
+            .supertypes("Legendary")
+            .text("Other Goblin creatures you control get +1/+1.")
+    }
+
     #[test]
-    fn a_theme_carried_by_the_commander_is_major_below_eight_deck_cards() {
+    fn a_tribal_theme_named_by_the_commander_text_is_major_below_eight_deck_cards() {
         let (grunts, deck_lines) = goblin_grunts(3, "R");
         let (_dir, db) = CardsFixture::new()
             .cards([
-                goblin("goblin-commander", "Goblin Warlord", "R").supertypes("Legendary"),
+                goblin_lord_commander(),
                 forest(),
                 goblin("goblin-pool", "Goblin Raider", "R"),
             ])
             .cards(grunts)
             .build();
         let input = format!("Commander\n1 Goblin Warlord\n\nDeck\n96 Forest\n{deck_lines}");
-        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
+        let result = run(&input, &db, &metrics::Thresholds::default(), None).unwrap();
 
         let raider = result
             .candidates
@@ -751,12 +775,46 @@ mod tests {
     }
 
     #[test]
+    fn the_commander_type_line_alone_does_not_make_its_subtypes_major() {
+        // Atraxa est Phyrexian Angel Horror, mais son texte ne nomme aucun
+        // de ces sous-types : 3 Anges dans le Deck ne font pas un Thème majeur.
+        let angel = |uuid: &str, name: &str| {
+            FixtureCard::new(uuid, name)
+                .types("Creature")
+                .subtypes("Angel")
+                .identity("W")
+        };
+        let (_dir, db) = CardsFixture::new()
+            .cards([
+                atraxa(),
+                forest(),
+                angel("angel-1", "Serra Angel"),
+                angel("angel-2", "Baneslayer Angel"),
+                angel("angel-3", "Lyra Dawnbringer"),
+                angel("angel-pool", "Archangel Avacyn"),
+            ])
+            .build();
+        let input = "Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n96 Forest\n\
+                     1 Serra Angel\n1 Baneslayer Angel\n1 Lyra Dawnbringer\n";
+        let result = run(input, &db, &metrics::Thresholds::default(), None).unwrap();
+
+        assert!(
+            !result
+                .candidates
+                .iter()
+                .any(|c| c.card.name == "Archangel Avacyn"),
+            "tribal:Angel only comes from Atraxa's type line: {:?}",
+            result.candidates
+        );
+    }
+
+    #[test]
     fn a_theme_the_commander_does_not_carry_still_needs_eight_deck_cards() {
         // Atraxa (Angel) ne porte pas tribal:Goblin : 7 Gobelins ne suffisent pas.
         let (_dir, db, goblin_lines) = fixture_db_with_goblin_pool(7);
         let input =
             format!("Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n91 Forest\n{goblin_lines}");
-        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
+        let result = run(&input, &db, &metrics::Thresholds::default(), None).unwrap();
 
         assert!(
             !result
@@ -777,7 +835,7 @@ mod tests {
             ..Default::default()
         };
         let db = db.with_corrections(corrections(&[("Atraxa, Praetors' Voice", goblin_theme)]));
-        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
+        let result = run(&input, &db, &metrics::Thresholds::default(), None).unwrap();
 
         assert!(
             result
@@ -793,7 +851,7 @@ mod tests {
         let (grunts, deck_lines) = goblin_grunts(3, "R");
         let (_dir, db) = CardsFixture::new()
             .cards([
-                goblin("goblin-commander", "Goblin Warlord", "R").supertypes("Legendary"),
+                goblin_lord_commander(),
                 forest(),
                 goblin("goblin-pool", "Goblin Raider", "R"),
             ])
@@ -805,7 +863,7 @@ mod tests {
         };
         let db = db.with_corrections(corrections(&[("Goblin Warlord", no_theme)]));
         let input = format!("Commander\n1 Goblin Warlord\n\nDeck\n96 Forest\n{deck_lines}");
-        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
+        let result = run(&input, &db, &metrics::Thresholds::default(), None).unwrap();
 
         assert!(
             !result
@@ -840,7 +898,7 @@ mod tests {
             ])
             .cards(pool)
             .build();
-        let result = run(&deck_of(98, "1 Sol Ring\n"), &db, thresholds).unwrap();
+        let result = run(&deck_of(98, "1 Sol Ring\n"), &db, thresholds, None).unwrap();
         result.candidates.into_iter().map(|c| c.card.name).collect()
     }
 

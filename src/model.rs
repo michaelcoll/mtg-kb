@@ -143,6 +143,12 @@ impl Bracket {
     }
 }
 
+impl Bracket {
+    fn out_of_range(received: impl std::fmt::Display) -> String {
+        format!("le Bracket va de 1 à 5 (reçu : {received})")
+    }
+}
+
 impl TryFrom<u8> for Bracket {
     type Error = String;
 
@@ -150,7 +156,7 @@ impl TryFrom<u8> for Bracket {
         if (1..=5).contains(&value) {
             Ok(Self(value))
         } else {
-            Err(format!("le Bracket va de 1 à 5 (reçu : {value})"))
+            Err(Self::out_of_range(value))
         }
     }
 }
@@ -165,9 +171,7 @@ impl std::str::FromStr for Bracket {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let value: u8 = s
-            .parse()
-            .map_err(|_| format!("le Bracket va de 1 à 5 (reçu : {s})"))?;
+        let value: u8 = s.parse().map_err(|_| Self::out_of_range(s))?;
         Self::try_from(value)
     }
 }
@@ -433,7 +437,7 @@ pub struct Synergy {
 /// Provenance d'une Carte proposée (CONTEXT.md, Origine) : Candidat de `kb`,
 /// Recommandation externe d'une Source, sinon investigation hors de ces listes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(into = "&'static str", try_from = "String")]
 pub enum Origin {
     Kb,
     Edhrec,
@@ -442,7 +446,14 @@ pub enum Origin {
 }
 
 impl Origin {
-    /// Libellé du badge dans le Rapport d'analyse, identique à la valeur JSON.
+    const ALL: [Origin; 4] = [
+        Origin::Kb,
+        Origin::Edhrec,
+        Origin::Recommander,
+        Origin::Investigation,
+    ];
+
+    /// Valeur JSON, reprise telle quelle par le badge du Rapport d'analyse.
     pub fn label(self) -> &'static str {
         match self {
             Origin::Kb => "kb",
@@ -450,6 +461,23 @@ impl Origin {
             Origin::Recommander => "recommander",
             Origin::Investigation => "investigation",
         }
+    }
+}
+
+impl From<Origin> for &'static str {
+    fn from(origin: Origin) -> Self {
+        origin.label()
+    }
+}
+
+impl TryFrom<String> for Origin {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Origin::ALL
+            .into_iter()
+            .find(|origin| origin.label() == value)
+            .ok_or_else(|| format!("Origine inconnue : « {value} »"))
     }
 }
 
@@ -700,5 +728,35 @@ mod tests {
         }));
         let result: Result<EnrichedAnalysis, _> = serde_json::from_value(json);
         assert!(result.is_ok(), "{:?}", result.err());
+    }
+
+    #[test]
+    fn origins_are_written_and_read_as_lowercase_names() {
+        let json = serde_json::json!(["kb", "edhrec", "recommander", "investigation"]);
+        let origins: Vec<Origin> = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(
+            origins,
+            vec![
+                Origin::Kb,
+                Origin::Edhrec,
+                Origin::Recommander,
+                Origin::Investigation
+            ]
+        );
+        assert_eq!(serde_json::to_value(&origins).unwrap(), json);
+        assert!(serde_json::from_value::<Origin>(serde_json::json!("Kb")).is_err());
+    }
+
+    #[test]
+    fn a_bracket_outside_one_to_five_is_refused_with_the_same_message() {
+        use std::str::FromStr;
+        assert_eq!(
+            Bracket::from_str("6").unwrap_err(),
+            "le Bracket va de 1 à 5 (reçu : 6)"
+        );
+        assert_eq!(
+            Bracket::from_str("x").unwrap_err(),
+            "le Bracket va de 1 à 5 (reçu : x)"
+        );
     }
 }
