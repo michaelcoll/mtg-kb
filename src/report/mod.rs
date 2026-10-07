@@ -9,10 +9,9 @@ mod prepare;
 mod swap;
 mod validate;
 
+pub use crate::deck_context::GameChangerTally;
 pub use crate::model::Origin;
-pub use prepare::{
-    CardPrintings, GameChangerTally, PrintingLookup, ReportModel, ValidatedSuggestion, prepare,
-};
+pub use prepare::{CardPrintings, PrintingLookup, ReportModel, ValidatedSuggestion, prepare};
 pub use swap::SwapWarning;
 
 pub fn slugify(name: &str) -> String {
@@ -607,6 +606,8 @@ fn render_credits_section() -> String {
     )
 }
 
+/// Une Carte recommandée par plusieurs pages n'est listée qu'une fois, à sa
+/// première occurrence.
 fn render_unused_recommendations_list<T>(
     items: &[T],
     suggestion_names: &HashSet<&str>,
@@ -614,9 +615,10 @@ fn render_unused_recommendations_list<T>(
     card_name: impl Fn(&T) -> &str,
     label: impl Fn(&T, &str) -> String,
 ) -> String {
+    let mut listed: HashSet<&str> = HashSet::new();
     let list_items: String = items
         .iter()
-        .filter(|r| !suggestion_names.contains(card_name(r)))
+        .filter(|r| !suggestion_names.contains(card_name(r)) && listed.insert(card_name(r)))
         .map(|r| {
             let name = card_name(r);
             let name_html = hover_card_link(name, card_printings.get(name));

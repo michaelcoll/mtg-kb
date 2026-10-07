@@ -11,20 +11,36 @@ use super::themes;
 
 const CANDIDATE_LIMIT_PER_BUCKET: usize = 10;
 
+/// Ce que l'analyse attend des Candidats : Thèmes majeurs et Rôles
+/// sous-représentés à servir, couleurs sous-alimentées, et départage à score
+/// égal.
+#[derive(Debug, Clone)]
+pub struct DeckNeeds {
+    pub major_themes: HashSet<String>,
+    pub weak_roles: Vec<String>,
+    pub undersupplied_colors: Vec<String>,
+    pub tie_break: TieBreak,
+}
+
 /// Cartes éligibles (`DeckContext`) réparties en Candidats : jusqu'à
 /// `CANDIDATE_LIMIT_PER_BUCKET` par Rôle sous-représenté et par Thème majeur,
-/// dédupliqués par nom. Les terrains de base ne sont jamais Candidats. Un Candidat porte tous les Rôles/Thèmes du Deck qu'il
-/// matche. Les Cartes qui n'en matchent aucun sont écartées. À score égal,
-/// `tie_break` départage, à la sélection par panier comme au tri final. Un
-/// terrain Candidat gagne un point par couleur sous-alimentée qu'il produit.
+/// dédupliqués par nom. Les terrains de base ne sont jamais Candidats. Un
+/// Candidat porte tous les Rôles/Thèmes du Deck qu'il matche. Les Cartes qui
+/// n'en matchent aucun sont écartées. À score égal, `tie_break` départage, à
+/// la sélection par panier comme au tri final. Un terrain Candidat gagne un
+/// point par couleur sous-alimentée qu'il produit.
 pub fn find_candidates(
     db: &CardsDb,
     deck: &DeckContext,
-    major_themes: &HashSet<String>,
-    weak_roles: &[String],
-    undersupplied_colors: &[String],
-    tie_break: TieBreak,
+    needs: &DeckNeeds,
 ) -> Result<Vec<Candidate>> {
+    let DeckNeeds {
+        major_themes,
+        weak_roles,
+        undersupplied_colors,
+        tie_break,
+    } = needs;
+    let tie_break = *tie_break;
     let pool = db.commander_pool(deck.commander_identity())?;
     let undersupplied_colors_produced = |card: &Card| -> u32 {
         if undersupplied_colors.is_empty() {
@@ -115,6 +131,16 @@ mod tests {
     use crate::db::fixture::{CardsFixture, FixtureCard};
     use crate::model::Card;
 
+    /// Thèmes majeurs et Rôles sous-représentés, sans couleur sous-alimentée.
+    fn needs(major_themes: &[&str], weak_roles: &[&str]) -> DeckNeeds {
+        DeckNeeds {
+            major_themes: major_themes.iter().map(|t| t.to_string()).collect(),
+            weak_roles: weak_roles.iter().map(|r| r.to_string()).collect(),
+            undersupplied_colors: vec![],
+            tie_break: TieBreak::EdhrecRankFirst,
+        }
+    }
+
     /// Commandant d'Identité `identity` et Deck des Cartes `deck_names`.
     fn deck(identity: &[&str], deck_names: &[&str]) -> DeckContext {
         let commander = Card::named("Test Commander", identity);
@@ -197,10 +223,7 @@ mod tests {
         let candidates = find_candidates(
             &db,
             &deck(&["G"], &["Rampant Growth"]),
-            &HashSet::new(),
-            &["ramp".to_string()],
-            &[],
-            TieBreak::EdhrecRankFirst,
+            &needs(&[], &["ramp"]),
         )
         .unwrap();
 
@@ -219,18 +242,8 @@ mod tests {
     #[test]
     fn scores_higher_for_weak_role_than_theme_only() {
         let (_dir, db) = fixture_db();
-        let mut major_themes = HashSet::new();
-        major_themes.insert("tokens".to_string());
-
-        let candidates = find_candidates(
-            &db,
-            &deck(&["G", "R"], &[]),
-            &major_themes,
-            &["ramp".to_string()],
-            &[],
-            TieBreak::EdhrecRankFirst,
-        )
-        .unwrap();
+        let candidates =
+            find_candidates(&db, &deck(&["G", "R"], &[]), &needs(&["tokens"], &["ramp"])).unwrap();
 
         let rampant = candidates
             .iter()
@@ -248,15 +261,7 @@ mod tests {
     #[test]
     fn excludes_zero_score_candidates() {
         let (_dir, db) = fixture_db();
-        let candidates = find_candidates(
-            &db,
-            &deck(&["G"], &[]),
-            &HashSet::new(),
-            &[],
-            &[],
-            TieBreak::EdhrecRankFirst,
-        )
-        .unwrap();
+        let candidates = find_candidates(&db, &deck(&["G"], &[]), &needs(&[], &[])).unwrap();
         assert!(
             !candidates.iter().any(|c| c.card.name == "Grizzly Bears"),
             "vanilla creature matches nothing, should be excluded"
@@ -267,15 +272,7 @@ mod tests {
     fn a_late_alphabet_card_can_be_a_candidate_in_a_500_plus_card_pool() {
         let (_dir, db) = large_fixture_db(520, false);
 
-        let candidates = find_candidates(
-            &db,
-            &deck(&["G"], &[]),
-            &HashSet::new(),
-            &["ramp".to_string()],
-            &[],
-            TieBreak::EdhrecRankFirst,
-        )
-        .unwrap();
+        let candidates = find_candidates(&db, &deck(&["G"], &[]), &needs(&[], &["ramp"])).unwrap();
 
         assert!(
             candidates
@@ -290,15 +287,7 @@ mod tests {
     fn caps_at_ten_candidates_per_weak_role_without_duplicates() {
         let (_dir, db) = large_fixture_db(520, true);
 
-        let candidates = find_candidates(
-            &db,
-            &deck(&["G"], &[]),
-            &HashSet::new(),
-            &["ramp".to_string()],
-            &[],
-            TieBreak::EdhrecRankFirst,
-        )
-        .unwrap();
+        let candidates = find_candidates(&db, &deck(&["G"], &[]), &needs(&[], &["ramp"])).unwrap();
 
         assert_eq!(
             candidates.len(),
@@ -315,18 +304,8 @@ mod tests {
         // Toutes les Cartes de la fixture (y compris "Z...") sont des Elfes :
         // "tribal:Elf" est ici traité comme Thème majeur pour vérifier le
         // plafond par Thème, indépendamment du plafond par Rôle.
-        let mut major_themes = HashSet::new();
-        major_themes.insert("tribal:Elf".to_string());
-
-        let candidates = find_candidates(
-            &db,
-            &deck(&["G"], &[]),
-            &major_themes,
-            &[],
-            &[],
-            TieBreak::EdhrecRankFirst,
-        )
-        .unwrap();
+        let candidates =
+            find_candidates(&db, &deck(&["G"], &[]), &needs(&["tribal:Elf"], &[])).unwrap();
 
         assert_eq!(candidates.len(), CANDIDATE_LIMIT_PER_BUCKET);
         let unique: HashSet<&str> = candidates.iter().map(|c| c.card.name.as_str()).collect();
@@ -336,21 +315,12 @@ mod tests {
     #[test]
     fn weak_role_and_major_theme_buckets_are_deduplicated_in_the_union() {
         let (_dir, db) = large_fixture_db(520, true);
-        let mut major_themes = HashSet::new();
-        major_themes.insert("tribal:Elf".to_string());
 
         // Chaque Carte Elfe de la fixture matche à la fois le Rôle "ramp" et
         // le Thème "tribal:Elf" : les deux paniers de 10 se recouvrent
         // entièrement, donc l'union dédupliquée ne doit pas dépasser 10.
-        let candidates = find_candidates(
-            &db,
-            &deck(&["G"], &[]),
-            &major_themes,
-            &["ramp".to_string()],
-            &[],
-            TieBreak::EdhrecRankFirst,
-        )
-        .unwrap();
+        let candidates =
+            find_candidates(&db, &deck(&["G"], &[]), &needs(&["tribal:Elf"], &["ramp"])).unwrap();
 
         assert_eq!(
             candidates.len(),

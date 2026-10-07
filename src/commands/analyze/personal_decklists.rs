@@ -11,27 +11,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::analyze::MAJOR_THEME_MIN_CARDS;
-use crate::analyze::external::edhrec::EdhrecClient;
-use crate::analyze::external::recommander::RecommanderClient;
 use crate::analyze::metrics::{Thresholds, weak_role_names};
 use crate::data_dir::{cards_db_path, data_dir};
 use crate::model::AnalyzeResult;
 
 const DECKS_SUBDIR: &str = "decks";
-
-struct NoNetworkEdhrecClient;
-impl EdhrecClient for NoNetworkEdhrecClient {
-    fn fetch(&self, _slug: &str) -> anyhow::Result<String> {
-        panic!("la non-régression est hors ligne : EDHREC ne doit pas être appelé")
-    }
-}
-
-struct NoNetworkRecommanderClient;
-impl RecommanderClient for NoNetworkRecommanderClient {
-    fn fetch(&self, _body: &serde_json::Value) -> anyhow::Result<String> {
-        panic!("la non-régression est hors ligne : Recommander ne doit pas être appelé")
-    }
-}
 
 fn personal_decklists(decks_dir: &Path) -> Vec<PathBuf> {
     let mut paths: Vec<PathBuf> = std::fs::read_dir(decks_dir)
@@ -122,22 +106,12 @@ fn personal_decklists_produce_candidates_for_each_weak_role_and_major_theme() {
 
     let db = super::super::open_cards_db().expect("ouverture de la Base cartes");
     let thresholds = Thresholds::default();
-    let cache_dir = tempfile::tempdir().unwrap();
     let mut failures = Vec::new();
 
     for path in personal_decklists(&decks_dir) {
         let deck = path.file_name().unwrap().to_string_lossy().into_owned();
-        let analysis = crate::decklist::read_source(&path.to_string_lossy()).and_then(|input| {
-            super::analyze_deck(
-                &input,
-                &db,
-                &thresholds,
-                true,
-                &NoNetworkEdhrecClient,
-                &NoNetworkRecommanderClient,
-                cache_dir.path(),
-            )
-        });
+        let analysis = crate::decklist::read_source(&path.to_string_lossy())
+            .and_then(|input| super::test_support::try_analyze_offline(&db, &input, &thresholds));
         match analysis {
             Err(e) => failures.push(format!("{deck} : l'analyse échoue : {e:#}")),
             Ok(result) => {

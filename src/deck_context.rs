@@ -12,8 +12,30 @@ pub enum Ineligible {
     Illegal,
     OutsideIdentity,
     AlreadyInDeck,
-    /// Game Changer alors que le Deck atteint déjà la limite du Bracket.
+    /// Game Changer qui ferait dépasser la limite du Bracket.
     GameChangerOverLimit,
+}
+
+/// Game Changers du Deck (Commandant compris) face à la limite du Bracket.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct GameChangerTally {
+    /// Commandant d'abord, puis ordre de la Decklist.
+    pub in_deck: Vec<String>,
+    pub bracket: Option<Bracket>,
+    /// `None` : sans Bracket, ou Bracket sans limite.
+    pub limit: Option<usize>,
+}
+
+impl GameChangerTally {
+    /// Le Deck compte plus de Game Changers que le Bracket n'en autorise.
+    pub fn is_over_limit(&self) -> bool {
+        self.exceeds_limit(self.in_deck.len())
+    }
+
+    /// `count` Game Changers dépassent la limite du Bracket.
+    pub fn exceeds_limit(&self, count: usize) -> bool {
+        self.limit.is_some_and(|limit| count > limit)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -56,21 +78,20 @@ impl DeckContext {
     }
 
     /// Sans Bracket, aucune limite de Game Changers ne s'applique.
-    pub fn in_bracket(self, bracket: Option<Bracket>) -> Self {
+    pub fn with_bracket(self, bracket: Option<Bracket>) -> Self {
         Self { bracket, ..self }
     }
 
-    pub fn bracket(&self) -> Option<Bracket> {
-        self.bracket
+    /// Game Changers du Deck face à la limite du Bracket.
+    pub fn game_changer_tally(&self) -> GameChangerTally {
+        GameChangerTally {
+            in_deck: self.game_changers.clone(),
+            bracket: self.bracket,
+            limit: self.game_changer_limit(),
+        }
     }
 
-    /// Game Changers du Deck, Commandant compris.
-    pub fn game_changers(&self) -> &[String] {
-        &self.game_changers
-    }
-
-    /// Limite de Game Changers du Bracket ; `None` sans Bracket ou sans limite.
-    pub fn game_changer_limit(&self) -> Option<usize> {
+    fn game_changer_limit(&self) -> Option<usize> {
         self.bracket.and_then(Bracket::game_changer_limit)
     }
 
@@ -86,7 +107,7 @@ impl DeckContext {
 
     pub fn from_analysis(analysis: &AnalyzeResult) -> Self {
         Self::new(&analysis.commander, analysis.cards.iter().map(|c| &c.card))
-            .in_bracket(analysis.bracket)
+            .with_bracket(analysis.bracket)
     }
 
     /// Commandant compris.
@@ -95,8 +116,22 @@ impl DeckContext {
     }
 
     /// Première règle enfreinte : légalité, Identité de couleur, absence du
-    /// Deck, limite de Game Changers du Bracket.
+    /// Deck, limite de Game Changers du Bracket (Candidat et Recommandation
+    /// externe : un Game Changer est refusé dès que le Deck atteint la limite).
     pub fn eligibility(&self, card: &Card) -> Result<(), Ineligible> {
+        let game_changers_after = self.game_changers.len() + usize::from(card.game_changer);
+        self.eligibility_after_swaps(card, game_changers_after)
+    }
+
+    /// `eligibility` pour une Suggestion : le Deck compterait
+    /// `game_changers_after` Game Changers une fois les échanges faits, cette
+    /// Suggestion comprise ; un Game Changer n'est refusé que s'il fait
+    /// dépasser la limite du Bracket.
+    pub fn eligibility_after_swaps(
+        &self,
+        card: &Card,
+        game_changers_after: usize,
+    ) -> Result<(), Ineligible> {
         if !card.legal_in_commander {
             return Err(Ineligible::Illegal);
         }
@@ -109,7 +144,7 @@ impl DeckContext {
         if card.game_changer
             && self
                 .game_changer_limit()
-                .is_some_and(|limit| self.game_changers.len() >= limit)
+                .is_some_and(|limit| game_changers_after > limit)
         {
             return Err(Ineligible::GameChangerOverLimit);
         }

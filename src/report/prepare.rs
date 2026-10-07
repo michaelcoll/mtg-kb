@@ -10,9 +10,9 @@ use super::validate::validate_suggestions;
 use crate::analyze::metrics::detect_roles;
 use crate::analyze::origins::origins_of;
 use crate::db::cards::CardsDb;
-use crate::deck_context::DeckContext;
+use crate::deck_context::{DeckContext, GameChangerTally};
 use crate::model::Origin;
-use crate::model::{AnalyzeResult, Bracket, Card, EnrichedAnalysis, ReferencePrinting, Verdict};
+use crate::model::{AnalyzeResult, Card, EnrichedAnalysis, ReferencePrinting, Verdict};
 
 /// Ce que `prepare` lit de la Base cartes (Corrections comprises, ADR 0005).
 pub trait PrintingLookup {
@@ -56,25 +56,6 @@ impl ValidatedSuggestion {
     /// Consensus : la Carte est proposée par plusieurs Origines.
     pub fn is_consensus(&self) -> bool {
         self.origins.len() > 1
-    }
-}
-
-/// Game Changers du Deck (Commandant compris) face à la limite du Bracket.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct GameChangerTally {
-    pub in_deck: Vec<String>,
-    pub bracket: Option<Bracket>,
-    /// `None` : sans Bracket, ou Bracket sans limite.
-    pub limit: Option<usize>,
-}
-
-impl GameChangerTally {
-    fn of(deck: &DeckContext) -> Self {
-        Self {
-            in_deck: deck.game_changers().to_vec(),
-            bracket: deck.bracket(),
-            limit: deck.game_changer_limit(),
-        }
     }
 }
 
@@ -163,7 +144,7 @@ pub fn prepare(
         suggestions,
     } = enriched;
 
-    let game_changers = GameChangerTally::of(&DeckContext::from_analysis(&analysis));
+    let game_changers = DeckContext::from_analysis(&analysis).game_changer_tally();
     let commander_printing = lookup.reference_printing(&analysis.commander.name)?;
     let suggestions = suggestions
         .into_iter()
@@ -419,6 +400,26 @@ mod tests {
     }
 
     #[test]
+    fn a_card_recommended_by_several_edhrec_pages_is_listed_once_in_the_appendix() {
+        let mut enriched = sample(vec![]);
+        let edhrec = &mut enriched.analysis.external.edhrec_recommendations;
+        edhrec.push(EdhrecRecommendation {
+            card: Card::named("Sol Ring", &[]),
+            synergy: 0.7,
+            inclusion_rate: 0.8,
+            header: "Top Cards".to_string(),
+            theme: Some("tokens".to_string()),
+            origins: vec![],
+        });
+        let model = prepare(enriched, &lookup()).unwrap();
+        assert_eq!(model.analysis.external.edhrec_recommendations.len(), 2);
+
+        let html = super::super::render(&model);
+        assert_eq!(html.matches("(synergie ").count(), 1, "{html}");
+        assert!(html.contains("(synergie 0.40)"), "première page gardée");
+    }
+
+    #[test]
     fn a_card_without_reference_printing_is_simply_absent() {
         let mut lookup = lookup();
         lookup.printings.remove("Sol Ring");
@@ -472,7 +473,56 @@ mod tests {
     }
 
     fn lookup_with_game_changers() -> MapLookup {
-        lookup().with(game_changer("Survival of the Fittest"))
+        lookup()
+            .with(game_changer("Survival of the Fittest"))
+            .with(game_changer("Natural Order"))
+    }
+
+    const THREE_GAME_CHANGERS: [&str; 3] = ["Demonic Tutor", "Cyclonic Rift", "Smothering Tithe"];
+
+    #[test]
+    fn a_game_changer_swapped_for_a_game_changer_keeps_the_count_and_is_accepted() {
+        let enriched = enriched_json_in_bracket(
+            3,
+            &THREE_GAME_CHANGERS,
+            vec![suggestion("Survival of the Fittest", Some("Cyclonic Rift"))],
+        );
+        let result = prepare(enriched, &lookup_with_game_changers());
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn a_suggestion_removing_a_game_changer_frees_a_slot_for_a_later_one() {
+        let enriched = enriched_json_in_bracket(
+            3,
+            &THREE_GAME_CHANGERS,
+            vec![
+                suggestion("Beast Within", Some("Cyclonic Rift")),
+                suggestion("Survival of the Fittest", None),
+            ],
+        );
+        let result = prepare(enriched, &lookup_with_game_changers());
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn game_changer_suggestions_are_counted_together_against_the_limit() {
+        let enriched = enriched_json_in_bracket(
+            3,
+            &["Demonic Tutor", "Cyclonic Rift"],
+            vec![
+                suggestion("Survival of the Fittest", None),
+                suggestion("Natural Order", None),
+            ],
+        );
+        match prepare(enriched, &lookup_with_game_changers()) {
+            Err(PrepareError::Violations(violations)) => {
+                assert_eq!(violations.len(), 1, "{violations:?}");
+                assert!(violations[0].contains("Natural Order"), "{violations:?}");
+                assert!(violations[0].contains("Bracket 3"), "{violations:?}");
+            }
+            other => panic!("violation attendue, obtenu {other:?}"),
+        }
     }
 
     #[test]

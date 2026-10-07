@@ -28,9 +28,10 @@ pub(super) fn swap_warnings(
 
     analysis
         .thresholds
-        .role_minimums()
+        .role_thresholds()
         .into_iter()
-        .filter_map(|(role, minimum)| {
+        .filter_map(|threshold| {
+            let (role, minimum) = (threshold.role, threshold.minimum);
             let before = *analysis.role_counts.get(role).unwrap_or(&0);
             let added = u32::from(suggestion_roles.iter().any(|r| r == role));
             let removed = u32::from(removed_roles.iter().any(|r| r == role));

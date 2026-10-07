@@ -300,15 +300,30 @@ impl Default for Thresholds {
     }
 }
 
+/// Un Rôle à seuil et son minimum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RoleThreshold {
+    pub role: &'static str,
+    /// Libellé du Point faible « <label> sous-représenté » ; `None` pour
+    /// `terrain`, dont le Point faible est « base de mana insuffisante ».
+    pub label: Option<&'static str>,
+    pub minimum: u32,
+}
+
 impl Thresholds {
-    /// Minimum de chaque Rôle à seuil, `terrain` compris.
-    pub fn role_minimums(&self) -> [(&'static str, u32); 5] {
+    /// Seule table des Rôles à seuil, `terrain` d'abord.
+    pub fn role_thresholds(&self) -> [RoleThreshold; 5] {
+        let role = |role, label, minimum| RoleThreshold {
+            role,
+            label,
+            minimum,
+        };
         [
-            (TERRAIN, self.min_lands),
-            (RAMP, self.min_ramp),
-            (PIOCHE, self.min_draw),
-            (REMOVAL_CIBLE, self.min_removal),
-            (WIPE, self.min_wipe),
+            role(TERRAIN, None, self.min_lands),
+            role(RAMP, Some("Ramp"), self.min_ramp),
+            role(PIOCHE, Some("Pioche"), self.min_draw),
+            role(REMOVAL_CIBLE, Some("Removal ciblé"), self.min_removal),
+            role(WIPE, Some("Wipe"), self.min_wipe),
         ]
     }
 }
@@ -418,28 +433,17 @@ const PIOCHE: &str = "pioche";
 const REMOVAL_CIBLE: &str = "removal_cible";
 const WIPE: &str = "wipe";
 
-fn role_thresholds(thresholds: &Thresholds) -> [(&'static str, &'static str, u32); 4] {
-    [
-        (RAMP, "Ramp", thresholds.min_ramp),
-        (PIOCHE, "Pioche", thresholds.min_draw),
-        (REMOVAL_CIBLE, "Removal ciblé", thresholds.min_removal),
-        (WIPE, "Wipe", thresholds.min_wipe),
-    ]
-}
-
-/// Rôles sous leur seuil, qui ouvrent chacun un panier de Candidats :
-/// `terrain` sous `min_lands` (Point faible « base de mana insuffisante »),
-/// puis les Rôles de `role_thresholds`.
+/// Rôles sous leur seuil, qui ouvrent chacun un panier de Candidats, dans
+/// l'ordre de `Thresholds::role_thresholds` (`terrain` d'abord).
 pub fn weak_role_names(
     role_counts: &BTreeMap<String, u32>,
     thresholds: &Thresholds,
 ) -> Vec<String> {
-    let lands = (TERRAIN, thresholds.min_lands);
-    let roles = role_thresholds(thresholds).map(|(role, _, min)| (role, min));
-    std::iter::once(lands)
-        .chain(roles)
-        .filter(|(role, min)| *role_counts.get(*role).unwrap_or(&0) < *min)
-        .map(|(role, _)| role.to_string())
+    thresholds
+        .role_thresholds()
+        .into_iter()
+        .filter(|t| *role_counts.get(t.role).unwrap_or(&0) < t.minimum)
+        .map(|t| t.role.to_string())
         .collect()
 }
 
@@ -456,8 +460,11 @@ pub fn role_weaknesses(
             thresholds.min_lands
         ));
     }
-    for (role, label, min) in role_thresholds(thresholds) {
-        let count = *role_counts.get(role).unwrap_or(&0);
+    for threshold in thresholds.role_thresholds() {
+        let (Some(label), min) = (threshold.label, threshold.minimum) else {
+            continue;
+        };
+        let count = *role_counts.get(threshold.role).unwrap_or(&0);
         if count < min {
             weaknesses.push(format!(
                 "{label} sous-représenté : {count} cartes (< {min})"

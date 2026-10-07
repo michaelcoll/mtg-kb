@@ -17,6 +17,24 @@ pub fn detect_themes(card: &Card) -> Vec<String> {
     }
 }
 
+/// Thèmes détectés sur le texte du Commandant : ceux de `detect_themes`, sauf
+/// les Thèmes tribaux issus de sa seule ligne de type (Atraxa, Phyrexian
+/// Angel Horror, ne rend pas `tribal:Angel` majeur). Un Thème tribal dont son
+/// texte oracle nomme le sous-type reste. Une Correction de Thèmes s'applique
+/// telle quelle (ADR 0005).
+pub fn commander_themes(commander: &Card) -> Vec<String> {
+    if let Some(themes) = &commander.corrections.themes {
+        return themes.clone();
+    }
+    let named = commander.union_over_faces(named_tribal_themes);
+    detect_themes(commander)
+        .into_iter()
+        .filter(|theme| !theme.starts_with(TRIBAL_PREFIX) || named.contains(theme))
+        .collect()
+}
+
+const TRIBAL_PREFIX: &str = "tribal:";
+
 /// Poids d'un Thème tribal dont le texte oracle nomme le sous-type (lords,
 /// payoffs) : il passe devant une simple créature du sous-type (poids 1).
 const NAMED_SUBTYPE_WEIGHT: u32 = 2;
