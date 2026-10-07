@@ -115,11 +115,13 @@ pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Resul
             *theme_counts.entry(theme.clone()).or_insert(0) += resolved.quantity;
         }
     }
-    // Les Thèmes du Commandant ne comptent pas dans le seuil de Thème majeur.
+    // Le Commandant ne compte pas dans le seuil de Thème majeur, mais ses
+    // propres Thèmes (Corrections comprises) sont majeurs d'office.
     let major_themes: HashSet<String> = theme_counts
         .into_iter()
         .filter(|(_, count)| *count >= MAJOR_THEME_MIN_CARDS)
         .map(|(theme, _)| theme)
+        .chain(themes::detect_themes(&commander))
         .collect();
     let weak_roles = metrics::weak_role_names(&role_counts, thresholds);
     let candidates = candidates::find_candidates(db, &deck, &major_themes, &weak_roles)?;
@@ -582,9 +584,8 @@ mod tests {
     }
 
     #[test]
-    fn the_commander_does_not_count_towards_the_major_theme_threshold() {
-        // 7 Gobelins + le Commandant Gobelin : 8 si le Commandant était compté.
-        let (grunts, deck_lines) = goblin_grunts(7, "R");
+    fn a_theme_carried_by_the_commander_is_major_below_eight_deck_cards() {
+        let (grunts, deck_lines) = goblin_grunts(3, "R");
         let (_dir, db) = CardsFixture::new()
             .cards([
                 goblin("goblin-commander", "Goblin Warlord", "R").supertypes("Legendary"),
@@ -593,7 +594,30 @@ mod tests {
             ])
             .cards(grunts)
             .build();
-        let input = format!("Commander\n1 Goblin Warlord\n\nDeck\n92 Forest\n{deck_lines}");
+        let input = format!("Commander\n1 Goblin Warlord\n\nDeck\n96 Forest\n{deck_lines}");
+        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
+
+        let raider = result
+            .candidates
+            .iter()
+            .find(|c| c.card.name == "Goblin Raider")
+            .expect("tribal:Goblin is carried by the Commander, hence major");
+        assert_eq!(raider.matched_themes, vec!["tribal:Goblin".to_string()]);
+        assert!(
+            !result
+                .candidates
+                .iter()
+                .any(|c| c.card.name == "Goblin Warlord"),
+            "the Commander carries the major theme but is never a Candidate"
+        );
+    }
+
+    #[test]
+    fn a_theme_the_commander_does_not_carry_still_needs_eight_deck_cards() {
+        // Atraxa (Angel) ne porte pas tribal:Goblin : 7 Gobelins ne suffisent pas.
+        let (_dir, db, goblin_lines) = fixture_db_with_goblin_pool(7);
+        let input =
+            format!("Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n91 Forest\n{goblin_lines}");
         let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
 
         assert!(
@@ -601,8 +625,56 @@ mod tests {
                 .candidates
                 .iter()
                 .any(|c| c.card.name == "Goblin Raider"),
-            "tribal:Goblin is carried by only 7 Deck cards; the Commander must not count towards \
-             the 8-card major-theme threshold"
+            "tribal:Goblin is carried by only 7 Deck cards and not by the Commander"
+        );
+    }
+
+    #[test]
+    fn a_theme_correction_on_the_commander_makes_its_themes_major() {
+        let (_dir, db, goblin_lines) = fixture_db_with_goblin_pool(3);
+        let input =
+            format!("Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n95 Forest\n{goblin_lines}");
+        let goblin_theme = CardCorrections {
+            themes: Some(vec!["tribal:Goblin".to_string()]),
+            ..Default::default()
+        };
+        let db = db.with_corrections(corrections(&[("Atraxa, Praetors' Voice", goblin_theme)]));
+        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
+
+        assert!(
+            result
+                .candidates
+                .iter()
+                .any(|c| c.card.name == "Goblin Raider"),
+            "the Commander's corrected themes include tribal:Goblin, hence major"
+        );
+    }
+
+    #[test]
+    fn a_theme_correction_can_remove_a_theme_from_the_commander() {
+        let (grunts, deck_lines) = goblin_grunts(3, "R");
+        let (_dir, db) = CardsFixture::new()
+            .cards([
+                goblin("goblin-commander", "Goblin Warlord", "R").supertypes("Legendary"),
+                forest(),
+                goblin("goblin-pool", "Goblin Raider", "R"),
+            ])
+            .cards(grunts)
+            .build();
+        let no_theme = CardCorrections {
+            themes: Some(vec![]),
+            ..Default::default()
+        };
+        let db = db.with_corrections(corrections(&[("Goblin Warlord", no_theme)]));
+        let input = format!("Commander\n1 Goblin Warlord\n\nDeck\n96 Forest\n{deck_lines}");
+        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
+
+        assert!(
+            !result
+                .candidates
+                .iter()
+                .any(|c| c.card.name == "Goblin Raider"),
+            "the correction removes tribal:Goblin from the Commander"
         );
     }
 }
