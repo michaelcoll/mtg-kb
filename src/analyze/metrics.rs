@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::LazyLock;
 
 use regex::Regex;
@@ -167,6 +167,13 @@ fn land_color_sources(
     commander_color_identity: &[String],
     counts: &mut BTreeMap<String, u32>,
 ) {
+    for color in land_colors(card, commander_color_identity) {
+        *counts.entry(color.to_string()).or_insert(0) += quantity;
+    }
+}
+
+/// Couleurs que produisent les Faces terrain de `card`.
+pub fn land_colors(card: &Card, commander_color_identity: &[String]) -> HashSet<&'static str> {
     static ADD_CLAUSE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)add ([^.;]*)").unwrap());
     static SYMBOL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{([^}]+)\}").unwrap());
     static ADD_ANY_COLOR_COLOR_IDENTITY: LazyLock<Regex> = LazyLock::new(|| {
@@ -176,7 +183,7 @@ fn land_color_sources(
     // Sans référence à l'Identité de couleur (Exotic Orchard…) : les 5 couleurs.
     static ADD_ANY_COLOR: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?i)add (one|a) mana of any color").unwrap());
-    let mut colors_seen = std::collections::HashSet::new();
+    let mut colors_seen = HashSet::new();
     for face in card.faces().filter(|f| f.is_land()) {
         let text = face.oracle_text.as_deref().unwrap_or("");
         for add_caps in ADD_CLAUSE.captures_iter(text) {
@@ -200,9 +207,7 @@ fn land_color_sources(
             colors_seen.extend(COLORS);
         }
     }
-    for color in colors_seen {
-        *counts.entry(color.to_string()).or_insert(0) += quantity;
-    }
+    colors_seen
 }
 
 pub fn mana_base(cards: &[ResolvedCard], commander: &Card) -> ManaBase {
@@ -269,6 +274,11 @@ pub struct Thresholds {
     /// jugée déséquilibrée vers le haut
     #[arg(long, default_value_t = Thresholds::DEFAULT.max_high_cost_cards)]
     pub max_high_cost_cards: u32,
+    /// Écart, en points de pourcentage, entre la part de symboles de mana et
+    /// la part de sources (terrains) d'une couleur de l'Identité au-delà
+    /// duquel cette couleur est jugée sous-alimentée
+    #[arg(long, default_value_t = Thresholds::DEFAULT.max_color_source_gap)]
+    pub max_color_source_gap: f64,
 }
 
 impl Thresholds {
@@ -280,6 +290,7 @@ impl Thresholds {
         min_wipe: 2,
         max_average_mana_value: 3.5,
         max_high_cost_cards: 8,
+        max_color_source_gap: 10.0,
     };
 }
 
@@ -326,6 +337,79 @@ pub fn curve_weaknesses(curve: &ManaCurve, thresholds: &Thresholds) -> Vec<Strin
         ));
     }
     weaknesses
+}
+
+/// Couleur de l'Identité dont la part de sources est inférieure de plus de
+/// `max_color_source_gap` points à sa part de symboles de mana.
+struct UndersuppliedColor {
+    color: &'static str,
+    symbol_percent: f64,
+    source_percent: f64,
+}
+
+/// Part de symboles : parmi les symboles des couleurs de l'Identité. Part de
+/// sources : parmi les terrains (un dual compte pour ses deux couleurs). Un
+/// Deck monocolore n'a jamais de couleur sous-alimentée.
+fn find_undersupplied_colors(
+    mana_base: &ManaBase,
+    commander_color_identity: &[String],
+    thresholds: &Thresholds,
+) -> Vec<UndersuppliedColor> {
+    let identity: Vec<&'static str> = COLORS
+        .into_iter()
+        .filter(|color| commander_color_identity.iter().any(|c| c == color))
+        .collect();
+    let count = |counts: &BTreeMap<String, u32>, color: &str| *counts.get(color).unwrap_or(&0);
+    let total_symbols: u32 = identity
+        .iter()
+        .map(|color| count(&mana_base.symbols_by_color, color))
+        .sum();
+    if identity.len() < 2 || total_symbols == 0 || mana_base.land_count == 0 {
+        return Vec::new();
+    }
+    let percent = |part: u32, total: u32| f64::from(part * 100) / f64::from(total);
+
+    identity
+        .into_iter()
+        .map(|color| UndersuppliedColor {
+            color,
+            symbol_percent: percent(count(&mana_base.symbols_by_color, color), total_symbols),
+            source_percent: percent(
+                count(&mana_base.sources_by_color, color),
+                mana_base.land_count,
+            ),
+        })
+        .filter(|c| c.symbol_percent - c.source_percent > thresholds.max_color_source_gap)
+        .collect()
+}
+
+/// Couleurs sous-alimentées, dans l'ordre WUBRG.
+pub fn undersupplied_colors(
+    mana_base: &ManaBase,
+    commander_color_identity: &[String],
+    thresholds: &Thresholds,
+) -> Vec<String> {
+    find_undersupplied_colors(mana_base, commander_color_identity, thresholds)
+        .into_iter()
+        .map(|c| c.color.to_string())
+        .collect()
+}
+
+pub fn color_weaknesses(
+    mana_base: &ManaBase,
+    commander_color_identity: &[String],
+    thresholds: &Thresholds,
+) -> Vec<String> {
+    find_undersupplied_colors(mana_base, commander_color_identity, thresholds)
+        .into_iter()
+        .map(|c| {
+            format!(
+                "couleur sous-alimentée : {} porte {:.0} % des symboles de mana mais {:.0} % des \
+                 sources (écart > {} points)",
+                c.color, c.symbol_percent, c.source_percent, thresholds.max_color_source_gap
+            )
+        })
+        .collect()
 }
 
 const TERRAIN: &str = "terrain";

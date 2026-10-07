@@ -114,6 +114,11 @@ pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Resul
         ranking::TieBreak::ManaValueFirst
     };
     weaknesses.extend(curve_weaknesses);
+    weaknesses.extend(metrics::color_weaknesses(
+        &mana_base,
+        &commander.color_identity,
+        thresholds,
+    ));
 
     let synergies = find_synergies(&cards);
 
@@ -132,7 +137,16 @@ pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Resul
         .chain(themes::detect_themes(&commander))
         .collect();
     let weak_roles = metrics::weak_role_names(&role_counts, thresholds);
-    let candidates = candidates::find_candidates(db, &deck, &major_themes, &weak_roles, tie_break)?;
+    let undersupplied_colors =
+        metrics::undersupplied_colors(&mana_base, &commander.color_identity, thresholds);
+    let candidates = candidates::find_candidates(
+        db,
+        &deck,
+        &major_themes,
+        &weak_roles,
+        &undersupplied_colors,
+        tie_break,
+    )?;
 
     Ok(AnalyzeResult {
         commander,

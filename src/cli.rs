@@ -236,10 +236,13 @@ mod tests {
                 "30",
                 "--max-average-mana-value",
                 "2.5",
+                "--max-color-source-gap",
+                "15",
             ]),
             Thresholds {
                 min_lands: 30,
                 max_average_mana_value: 2.5,
+                max_color_source_gap: 15.0,
                 ..Thresholds::default()
             }
         );
