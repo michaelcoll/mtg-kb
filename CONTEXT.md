@@ -56,6 +56,14 @@ _Avoid_: Général, commander
 L'ensemble des couleurs d'une Carte (coût et texte compris) ; celle du Commandant borne les Cartes autorisées dans le Deck.
 _Avoid_: Couleurs du deck
 
+**Bracket**:
+Le niveau de puissance visé pour un Deck, sur l'échelle officielle Commander de 1 à 5 ; facultatif. `kb` n'en fait respecter que la limite de Game Changers.
+_Avoid_: Power level, niveau
+
+**Game Changer**:
+Une Carte de la liste officielle Commander des cartes à fort impact ; aucune en Bracket 1-2, au plus 3 par Deck en Bracket 3, sans limite au-delà.
+_Avoid_: Staple, carte puissante
+
 **Carte non résolue**:
 Une ligne de Decklist dont le nom ne correspond exactement à aucune Carte.
 
@@ -70,7 +78,7 @@ Une stratégie transversale portée par des Cartes (tokens, compteurs +1/+1, ari
 _Avoid_: Archétype, tag, mécanique
 
 **Thème majeur**:
-Un Thème porté par au moins 8 Cartes du Deck ; distingue une stratégie réellement construite d'un Thème tribal accidentel (2-3 Cartes qui partagent un sous-type sans que ce soit voulu). Seuls les Thèmes majeurs alimentent les Candidats.
+Un Thème porté par au moins 8 Cartes du Deck (Commandant non compté), ou porté par le Commandant lui-même ; distingue une stratégie réellement construite d'un Thème tribal accidentel (2-3 Cartes qui partagent un sous-type sans que ce soit voulu). Seuls les Thèmes majeurs alimentent les Candidats.
 _Avoid_: Thème dominant, archétype
 
 **Correction**:
@@ -82,7 +90,7 @@ Un Thème partagé par plusieurs Cartes du même Deck.
 _Avoid_: Combo, interaction
 
 **Point faible**:
-Un écart mesurable du Deck par rapport à une attente : Rôle sous-représenté, courbe de mana déséquilibrée, base de mana insuffisante, Carte illégale.
+Un écart mesurable du Deck par rapport à une attente : Rôle sous-représenté, courbe de mana déséquilibrée, base de mana insuffisante, couleur sous-alimentée par les terrains au regard de ses symboles de mana, Carte illégale, Game Changers au-delà de la limite du Bracket.
 _Avoid_: Problème, défaut
 
 **Candidat**:
@@ -98,7 +106,7 @@ Une Carte proposée par une Source externe, après filtrage par `kb` (résolue, 
 _Avoid_: Suggestion, Candidat
 
 **Origine**:
-La provenance d'une Suggestion : Candidat de `kb`, Recommandation externe d'une Source, ou investigation hors de ces listes ; une Suggestion peut avoir plusieurs Origines.
+La provenance d'une Carte proposée (Candidat, Recommandation externe ou Suggestion) : Candidat de `kb`, Recommandation externe d'une Source, ou investigation hors de ces listes ; une Carte proposée peut avoir plusieurs Origines, ce qui marque un consensus entre elles.
 _Avoid_: Source (qui désigne le service tiers)
 
 **Suggestion**:
