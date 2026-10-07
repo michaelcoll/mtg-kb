@@ -74,7 +74,7 @@ La fonction d'une Carte dans un Deck (ramp, pioche, removal ciblé, wipe, protec
 _Avoid_: Tag, catégorie
 
 **Thème**:
-Une stratégie transversale portée par des Cartes (tokens, compteurs +1/+1, aristocrats, tribal…) ; une Carte a zéro ou plusieurs Thèmes.
+Une stratégie transversale portée par des Cartes (tokens, compteurs +1/+1, aristocrats, artefacts, enchantements, spellslinger, cimetière, landfall, lifegain, blink, voltron, tribal…) ; une Carte a zéro ou plusieurs Thèmes.
 _Avoid_: Archétype, tag, mécanique
 
 **Thème majeur**:

@@ -610,6 +610,45 @@ mod tests {
     }
 
     #[test]
+    fn a_deck_with_eight_cards_of_a_new_theme_yields_candidates_for_it() {
+        let artifact_payoff = |uuid: &str, name: &str| {
+            FixtureCard::new(uuid, name)
+                .types("Artifact Creature")
+                .text("Artifact spells you cast cost {1} less to cast.")
+                .identity("U")
+        };
+        let deck_payoffs: Vec<FixtureCard> = (0..8)
+            .map(|i| artifact_payoff(&format!("sculptor-{i}"), &format!("Etherium Sculptor {i}")))
+            .collect();
+        let deck_lines: String = (0..8)
+            .map(|i| format!("1 Etherium Sculptor {i}\n"))
+            .collect();
+        let (_dir, db) = CardsFixture::new()
+            .cards([
+                atraxa(),
+                forest(),
+                artifact_payoff("foundry", "Foundry Inspector"),
+            ])
+            .cards(deck_payoffs)
+            .build();
+        let input =
+            format!("Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n90 Forest\n{deck_lines}");
+        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
+
+        let inspector = result
+            .candidates
+            .iter()
+            .find(|c| c.card.name == "Foundry Inspector")
+            .expect("artefacts, carried by 8 deck cards, is a major theme");
+        assert_eq!(inspector.matched_themes, vec!["artefacts".to_string()]);
+        assert!(
+            result.synergies.iter().any(|s| s.theme == "artefacts"),
+            "{:?}",
+            result.synergies
+        );
+    }
+
+    #[test]
     fn the_commander_is_never_a_candidate() {
         let (grunts, deck_lines) = goblin_grunts(8, "R");
         let (_dir, db) = CardsFixture::new()
