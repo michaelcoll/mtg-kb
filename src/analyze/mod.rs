@@ -4,6 +4,7 @@ pub mod metrics;
 pub mod origins;
 pub mod ranking;
 pub mod themes;
+mod tribal;
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -561,6 +562,51 @@ mod tests {
             .find(|c| c.card.name == "Goblin Raider")
             .expect("tribal:Goblin, carried by 8 deck cards, is a major theme");
         assert_eq!(raider.matched_themes, vec!["tribal:Goblin".to_string()]);
+    }
+
+    #[test]
+    fn a_payoff_naming_the_major_tribal_subtype_outscores_a_plain_creature_of_it() {
+        let (grunts, deck_lines) = goblin_grunts(8, "G");
+        let (_dir, db) = CardsFixture::new()
+            .cards([
+                atraxa(),
+                forest(),
+                goblin("goblin-pool", "Goblin Raider", "G"),
+                goblin("goblin-lord", "Goblin Chieftain", "G")
+                    .text("Other Goblin creatures you control get +1/+1 and have haste."),
+                FixtureCard::new("goblin-drums", "Goblin War Drums")
+                    .types("Enchantment")
+                    .text("Each Goblin you control has menace.")
+                    .identity("G"),
+            ])
+            .cards(grunts)
+            .build();
+        let input =
+            format!("Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n90 Forest\n{deck_lines}");
+        let result = run(&input, &db, &metrics::Thresholds::default()).unwrap();
+
+        let score_of = |name: &str| {
+            let candidate = result
+                .candidates
+                .iter()
+                .find(|c| c.card.name == name)
+                .unwrap_or_else(|| panic!("{name} is a tribal:Goblin candidate"));
+            assert_eq!(candidate.matched_themes, vec!["tribal:Goblin".to_string()]);
+            candidate.score
+        };
+        assert_eq!(score_of("Goblin Raider"), 1);
+        assert_eq!(score_of("Goblin Chieftain"), 2);
+        assert_eq!(score_of("Goblin War Drums"), 2);
+        let order: Vec<_> = result
+            .candidates
+            .iter()
+            .map(|c| c.card.name.as_str())
+            .collect();
+        assert_eq!(
+            order.last(),
+            Some(&"Goblin Raider"),
+            "payoffs rank before the plain Goblin: {order:?}"
+        );
     }
 
     #[test]
