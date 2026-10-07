@@ -2,6 +2,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::analyze::metrics::Thresholds;
 use crate::db::overrides::CorrectionField;
+use crate::model::Bracket;
 use crate::output::Format;
 
 #[derive(Parser)]
@@ -20,6 +21,10 @@ pub enum Command {
         source: String,
         #[command(flatten)]
         thresholds: Thresholds,
+        /// Bracket visé (1 à 5) : limite les Game Changers proposés (aucun en
+        /// 1-2, au plus 3 dans le Deck en 3, sans limite en 4-5)
+        #[arg(long)]
+        bracket: Option<Bracket>,
         /// Désactive les appels aux Sources externes (EDHREC, Recommander) :
         /// utile pour les tests ou un usage hors ligne
         #[arg(long, default_value_t = false)]
@@ -246,6 +251,28 @@ mod tests {
                 ..Thresholds::default()
             }
         );
+    }
+
+    #[test]
+    fn analyze_bracket_is_optional_and_ranges_from_1_to_5() {
+        let bracket = |args: &[&str]| match parse(args).map(|cli| cli.command) {
+            Ok(Command::Analyze { bracket, .. }) => Ok(bracket.map(u8::from)),
+            Ok(_) => panic!("kb analyze attendu"),
+            Err(e) => Err(e),
+        };
+        assert_eq!(bracket(&["analyze", "deck.txt"]).unwrap(), None);
+        for n in 1..=5u8 {
+            assert_eq!(
+                bracket(&["analyze", "deck.txt", "--bracket", &n.to_string()]).unwrap(),
+                Some(n)
+            );
+        }
+        for invalid in ["0", "6", "-1", "trois"] {
+            assert!(
+                bracket(&["analyze", "deck.txt", "--bracket", invalid]).is_err(),
+                "--bracket {invalid}"
+            );
+        }
     }
 
     #[test]

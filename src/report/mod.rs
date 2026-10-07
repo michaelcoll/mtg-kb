@@ -683,6 +683,7 @@ mod tests {
                     name: "<script>alert(1)</script>".to_string(),
                 }],
                 card_count: 100,
+                bracket: None,
                 construction_errors: vec![],
                 mana_curve: ManaCurve {
                     buckets: vec![ManaCurveBucket {

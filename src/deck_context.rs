@@ -1,16 +1,19 @@
 //! Règle d'éligibilité partagée par Candidat, Recommandation externe et
 //! Suggestion (CONTEXT.md) : légale en Commander, dans l'Identité de couleur
-//! du Commandant, absente du Deck (Commandant compris).
+//! du Commandant, absente du Deck (Commandant compris), et, pour un Game
+//! Changer, dans la limite du Bracket.
 
 use std::collections::HashSet;
 
-use crate::model::{AnalyzeResult, Card, ColorIdentity};
+use crate::model::{AnalyzeResult, Bracket, Card, ColorIdentity};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ineligible {
     Illegal,
     OutsideIdentity,
     AlreadyInDeck,
+    /// Game Changer alors que le Deck atteint déjà la limite du Bracket.
+    GameChangerOverLimit,
 }
 
 #[derive(Debug, Clone)]
@@ -20,6 +23,9 @@ pub struct DeckContext {
     names: HashSet<String>,
     /// Ordre de la Decklist, Commandant exclu : corps de requête Recommander.
     names_without_basic_lands: Vec<String>,
+    bracket: Option<Bracket>,
+    /// Commandant compris, Commandant d'abord puis ordre de la Decklist.
+    game_changers: Vec<String>,
 }
 
 impl DeckContext {
@@ -34,12 +40,38 @@ impl DeckContext {
             .filter(|card| !card.is_basic_land())
             .map(|card| card.name.clone())
             .collect();
+        let game_changers = std::iter::once(commander)
+            .chain(deck_cards.iter().copied())
+            .filter(|card| card.game_changer)
+            .map(|card| card.name.clone())
+            .collect();
         Self {
             commander_name: commander.name.clone(),
             commander_identity: commander.identity(),
             names,
             names_without_basic_lands,
+            bracket: None,
+            game_changers,
         }
+    }
+
+    /// Sans Bracket, aucune limite de Game Changers ne s'applique.
+    pub fn in_bracket(self, bracket: Option<Bracket>) -> Self {
+        Self { bracket, ..self }
+    }
+
+    pub fn bracket(&self) -> Option<Bracket> {
+        self.bracket
+    }
+
+    /// Game Changers du Deck, Commandant compris.
+    pub fn game_changers(&self) -> &[String] {
+        &self.game_changers
+    }
+
+    /// Limite de Game Changers du Bracket ; `None` sans Bracket ou sans limite.
+    pub fn game_changer_limit(&self) -> Option<usize> {
+        self.bracket.and_then(Bracket::game_changer_limit)
     }
 
     pub fn commander_name(&self) -> &str {
@@ -54,6 +86,7 @@ impl DeckContext {
 
     pub fn from_analysis(analysis: &AnalyzeResult) -> Self {
         Self::new(&analysis.commander, analysis.cards.iter().map(|c| &c.card))
+            .in_bracket(analysis.bracket)
     }
 
     /// Commandant compris.
@@ -61,7 +94,8 @@ impl DeckContext {
         self.names.contains(name)
     }
 
-    /// Première règle enfreinte : légalité, Identité de couleur, absence du Deck.
+    /// Première règle enfreinte : légalité, Identité de couleur, absence du
+    /// Deck, limite de Game Changers du Bracket.
     pub fn eligibility(&self, card: &Card) -> Result<(), Ineligible> {
         if !card.legal_in_commander {
             return Err(Ineligible::Illegal);
@@ -71,6 +105,13 @@ impl DeckContext {
         }
         if self.contains(&card.name) {
             return Err(Ineligible::AlreadyInDeck);
+        }
+        if card.game_changer
+            && self
+                .game_changer_limit()
+                .is_some_and(|limit| self.game_changers.len() >= limit)
+        {
+            return Err(Ineligible::GameChangerOverLimit);
         }
         Ok(())
     }

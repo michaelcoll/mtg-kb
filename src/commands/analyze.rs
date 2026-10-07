@@ -11,17 +11,23 @@ use crate::data_dir::edhrec_cache_dir;
 use crate::db::cards::CardsDb;
 use crate::deck_context::DeckContext;
 use crate::decklist;
-use crate::model::AnalyzeResult;
+use crate::model::{AnalyzeResult, Bracket};
 use crate::output::print_json;
 
-pub fn run(source: &str, thresholds: &Thresholds, offline: bool) -> Result<()> {
+pub fn run(
+    source: &str,
+    thresholds: &Thresholds,
+    bracket: Option<Bracket>,
+    offline: bool,
+) -> Result<()> {
     let input = decklist::read_source(source)?;
 
     let db = super::open_cards_db()?;
-    let result = analyze_deck(
+    let result = analyze_deck_in_bracket(
         &input,
         &db,
         thresholds,
+        bracket,
         offline,
         &HttpEdhrecClient,
         &HttpRecommanderClient,
@@ -31,6 +37,8 @@ pub fn run(source: &str, thresholds: &Thresholds, offline: bool) -> Result<()> {
     print_json(&result)
 }
 
+/// Analyse sans Bracket.
+#[cfg(test)]
 fn analyze_deck(
     input: &str,
     db: &CardsDb,
@@ -40,7 +48,30 @@ fn analyze_deck(
     recommander_client: &dyn RecommanderClient,
     edhrec_cache_dir: &Path,
 ) -> Result<AnalyzeResult> {
-    let mut result = analyze::run(input, db, thresholds)?;
+    analyze_deck_in_bracket(
+        input,
+        db,
+        thresholds,
+        None,
+        offline,
+        edhrec_client,
+        recommander_client,
+        edhrec_cache_dir,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn analyze_deck_in_bracket(
+    input: &str,
+    db: &CardsDb,
+    thresholds: &Thresholds,
+    bracket: Option<Bracket>,
+    offline: bool,
+    edhrec_client: &dyn EdhrecClient,
+    recommander_client: &dyn RecommanderClient,
+    edhrec_cache_dir: &Path,
+) -> Result<AnalyzeResult> {
+    let mut result = analyze::run_in_bracket(input, db, thresholds, bracket)?;
 
     if !offline {
         result.external = external::fetch_all(
@@ -151,6 +182,7 @@ mod tests {
                 "cards",
                 "unresolved",
                 "card_count",
+                "bracket",
                 "construction_errors",
                 "mana_curve",
                 "mana_base",
@@ -880,6 +912,232 @@ mod land_candidates_tests {
             .map(|c| c.card.name.as_str())
             .collect();
         assert_eq!(unique.len(), result.candidates.len());
+    }
+}
+
+/// Bracket et limite de Game Changers (#96).
+#[cfg(test)]
+mod bracket_tests {
+    use super::*;
+    use crate::db::fixture::{CardsFixture, FixtureCard};
+    use crate::model::Bracket;
+
+    const DECK_GAME_CHANGERS: [&str; 3] = ["Demonic Tutor", "Cyclonic Rift", "Smothering Tithe"];
+
+    /// Atraxa, Forest, deux ramps Candidats (Mana Crypt, Game Changer, et
+    /// Rampant Growth) et trois Game Changers à mettre dans le Deck.
+    fn fixture_db() -> (tempfile::TempDir, CardsDb) {
+        CardsFixture::new()
+            .cards([
+                FixtureCard::new("atraxa", "Atraxa, Praetors' Voice")
+                    .types("Creature")
+                    .supertypes("Legendary")
+                    .identity("B, G, U, W"),
+                FixtureCard::new("forest", "Forest")
+                    .types("Land")
+                    .supertypes("Basic"),
+                FixtureCard::new("crypt", "Mana Crypt")
+                    .types("Artifact")
+                    .text("{T}: Add {C}{C}.")
+                    .game_changer(),
+                FixtureCard::new("rampant", "Rampant Growth")
+                    .types("Sorcery")
+                    .text("Search your library for a basic land card, put it onto the battlefield tapped, then shuffle.")
+                    .identity("G"),
+                FixtureCard::new("tutor", "Demonic Tutor")
+                    .types("Sorcery")
+                    .identity("B")
+                    .game_changer(),
+                FixtureCard::new("rift", "Cyclonic Rift")
+                    .types("Instant")
+                    .identity("U")
+                    .game_changer(),
+                FixtureCard::new("tithe", "Smothering Tithe")
+                    .types("Enchantment")
+                    .identity("W")
+                    .game_changer(),
+            ])
+            .build()
+    }
+
+    /// Deck de 100 cartes avec les `game_changers` premiers Game Changers.
+    fn deck_with_game_changers(game_changers: usize) -> String {
+        let mut input = format!(
+            "Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n{} Forest\n",
+            99 - game_changers
+        );
+        for name in &DECK_GAME_CHANGERS[..game_changers] {
+            input.push_str(&format!("1 {name}\n"));
+        }
+        input
+    }
+
+    fn recommending_both_ramps() -> (StubEdhrec, StubRecommander) {
+        let edhrec = serde_json::json!({
+            "container": {"json_dict": {"cardlists": [
+                {"header": "Top Cards", "cardviews": [
+                    {"name": "Mana Crypt", "synergy": 0.5, "num_decks": 9, "potential_decks": 10},
+                    {"name": "Rampant Growth", "synergy": 0.2, "num_decks": 5, "potential_decks": 10}
+                ]}
+            ]}}
+        });
+        let recommander = serde_json::json!({
+            "data": {"recommendations": [
+                {"name": "Mana Crypt", "score": 9.0},
+                {"name": "Rampant Growth", "score": 4.0}
+            ]}
+        });
+        (
+            StubEdhrec(edhrec.to_string()),
+            StubRecommander(recommander.to_string()),
+        )
+    }
+
+    struct StubEdhrec(String);
+    impl EdhrecClient for StubEdhrec {
+        fn fetch(&self, _slug: &str) -> Result<String> {
+            Ok(self.0.clone())
+        }
+    }
+
+    struct StubRecommander(String);
+    impl RecommanderClient for StubRecommander {
+        fn fetch(&self, _body: &serde_json::Value) -> Result<String> {
+            Ok(self.0.clone())
+        }
+    }
+
+    fn analyze_in(bracket: Option<u8>, game_changers_in_deck: usize) -> AnalyzeResult {
+        let (_dir, db) = fixture_db();
+        let cache_dir = tempfile::tempdir().unwrap();
+        let (edhrec, recommander) = recommending_both_ramps();
+        analyze_deck_in_bracket(
+            &deck_with_game_changers(game_changers_in_deck),
+            &db,
+            &Thresholds::default(),
+            bracket.map(|b| Bracket::try_from(b).unwrap()),
+            false,
+            &edhrec,
+            &recommander,
+            cache_dir.path(),
+        )
+        .unwrap()
+    }
+
+    /// Noms proposés, toutes listes confondues : Candidats, EDHREC, Recommander.
+    fn proposed(result: &AnalyzeResult) -> Vec<&str> {
+        result
+            .candidates
+            .iter()
+            .map(|c| &c.card)
+            .chain(
+                result
+                    .external
+                    .edhrec_recommendations
+                    .iter()
+                    .map(|r| &r.card),
+            )
+            .chain(
+                result
+                    .external
+                    .recommander_recommendations
+                    .iter()
+                    .map(|r| &r.card),
+            )
+            .map(|card| card.name.as_str())
+            .collect()
+    }
+
+    fn is_offered_everywhere(result: &AnalyzeResult, name: &str) -> bool {
+        result.candidates.iter().any(|c| c.card.name == name)
+            && result
+                .external
+                .edhrec_recommendations
+                .iter()
+                .any(|r| r.card.name == name)
+            && result
+                .external
+                .recommander_recommendations
+                .iter()
+                .any(|r| r.card.name == name)
+    }
+
+    #[test]
+    fn in_bracket_2_no_game_changer_is_proposed() {
+        let result = analyze_in(Some(2), 0);
+
+        assert!(
+            !proposed(&result).contains(&"Mana Crypt"),
+            "{:?}",
+            proposed(&result)
+        );
+        assert!(is_offered_everywhere(&result, "Rampant Growth"));
+    }
+
+    #[test]
+    fn in_bracket_3_game_changers_are_proposed_only_below_three_in_the_deck() {
+        let with_two = analyze_in(Some(3), 2);
+        assert!(is_offered_everywhere(&with_two, "Mana Crypt"));
+
+        let with_three = analyze_in(Some(3), 3);
+        assert!(
+            !proposed(&with_three).contains(&"Mana Crypt"),
+            "{:?}",
+            proposed(&with_three)
+        );
+        assert!(is_offered_everywhere(&with_three, "Rampant Growth"));
+    }
+
+    #[test]
+    fn in_bracket_4_or_without_bracket_nothing_is_filtered() {
+        for bracket in [Some(4), Some(5), None] {
+            let result = analyze_in(bracket, 3);
+            assert!(is_offered_everywhere(&result, "Mana Crypt"), "{bracket:?}");
+            assert!(
+                !result.weaknesses.iter().any(|w| w.contains("Game Changer")),
+                "{bracket:?} : {:?}",
+                result.weaknesses
+            );
+        }
+    }
+
+    #[test]
+    fn the_bracket_is_written_in_the_json() {
+        let json = serde_json::to_value(analyze_in(Some(3), 0)).unwrap();
+        assert_eq!(json["bracket"], 3);
+
+        let json = serde_json::to_value(analyze_in(None, 0)).unwrap();
+        assert_eq!(json["bracket"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn a_json_without_bracket_still_parses() {
+        let mut json = serde_json::to_value(analyze_in(Some(3), 0)).unwrap();
+        json.as_object_mut().unwrap().remove("bracket");
+        let parsed: AnalyzeResult = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.bracket, None);
+    }
+
+    #[test]
+    fn a_deck_over_the_bracket_limit_has_a_weakness_naming_its_game_changers() {
+        let result = analyze_in(Some(2), 1);
+        let weakness = result
+            .weaknesses
+            .iter()
+            .find(|w| w.contains("Game Changer"))
+            .unwrap_or_else(|| panic!("{:?}", result.weaknesses));
+        assert!(weakness.contains("Demonic Tutor"), "{weakness}");
+        assert!(weakness.contains("Bracket 2"), "{weakness}");
+    }
+
+    #[test]
+    fn a_deck_at_the_bracket_limit_has_no_game_changer_weakness() {
+        let result = analyze_in(Some(3), 3);
+        assert!(
+            !result.weaknesses.iter().any(|w| w.contains("Game Changer")),
+            "{:?}",
+            result.weaknesses
+        );
     }
 }
 

@@ -18,8 +18,9 @@ fn main() {
         cli::Command::Analyze {
             source,
             thresholds,
+            bracket,
             offline,
-        } => commands::analyze::run(&source, &thresholds, offline),
+        } => commands::analyze::run(&source, &thresholds, bracket, offline),
         cli::Command::Report { json_path } => commands::report::run(&json_path),
         cli::Command::Card { name, format } => commands::card::run(&name, format),
         cli::Command::Search(args) => commands::search::run(args),
