@@ -107,7 +107,13 @@ pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Resul
         mana_base.land_count,
         thresholds,
     ));
-    weaknesses.extend(metrics::curve_weaknesses(&mana_curve, thresholds));
+    let curve_weaknesses = metrics::curve_weaknesses(&mana_curve, thresholds);
+    let tie_break = if curve_weaknesses.is_empty() {
+        ranking::TieBreak::EdhrecRankFirst
+    } else {
+        ranking::TieBreak::ManaValueFirst
+    };
+    weaknesses.extend(curve_weaknesses);
 
     let synergies = find_synergies(&cards);
 
@@ -126,7 +132,7 @@ pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Resul
         .chain(themes::detect_themes(&commander))
         .collect();
     let weak_roles = metrics::weak_role_names(&role_counts, thresholds);
-    let candidates = candidates::find_candidates(db, &deck, &major_themes, &weak_roles)?;
+    let candidates = candidates::find_candidates(db, &deck, &major_themes, &weak_roles, tie_break)?;
 
     Ok(AnalyzeResult {
         commander,
@@ -762,6 +768,106 @@ mod tests {
                 .iter()
                 .any(|c| c.card.name == "Goblin Raider"),
             "the correction removes tribal:Goblin from the Commander"
+        );
+    }
+
+    /// Source de ramp verte : toutes ont le même score de Candidat (Rôle
+    /// faible "ramp" seul), donc seul le départage les distingue.
+    fn ramp_dork(uuid: &str, name: &str, mana_value: f64) -> FixtureCard {
+        FixtureCard::new(uuid, name)
+            .mana("{G}", mana_value)
+            .types("Creature")
+            .text("{T}: Add {G}.")
+            .identity("G")
+    }
+
+    /// Deck sans ramp (hors Sol Ring) : "ramp" est un Rôle faible et la
+    /// courbe (mana value moyenne 1) reste sous le seuil par défaut.
+    fn tied_pool_result(pool: Vec<FixtureCard>, thresholds: &metrics::Thresholds) -> Vec<String> {
+        let (_dir, db) = CardsFixture::new()
+            .cards([
+                atraxa(),
+                forest(),
+                FixtureCard::new("solring", "Sol Ring")
+                    .mana("{1}", 1.0)
+                    .types("Artifact")
+                    .text("{T}: Add {C}{C}."),
+            ])
+            .cards(pool)
+            .build();
+        let result = run(&deck_of(98, "1 Sol Ring\n"), &db, thresholds).unwrap();
+        result.candidates.into_iter().map(|c| c.card.name).collect()
+    }
+
+    #[test]
+    fn tied_candidates_are_ordered_by_edhrec_rank_before_name() {
+        let names = tied_pool_result(
+            vec![
+                ramp_dork("alpha", "Alpha Dork", 1.0).edhrec_rank(500),
+                ramp_dork("zeta", "Zeta Dork", 1.0).edhrec_rank(10),
+            ],
+            &metrics::Thresholds::default(),
+        );
+        assert_eq!(names, vec!["Zeta Dork", "Alpha Dork"]);
+    }
+
+    #[test]
+    fn an_unranked_candidate_comes_after_every_ranked_one_of_equal_score() {
+        let names = tied_pool_result(
+            vec![
+                ramp_dork("alpha", "Alpha Dork", 1.0),
+                ramp_dork("zeta", "Zeta Dork", 1.0).edhrec_rank(30_000),
+            ],
+            &metrics::Thresholds::default(),
+        );
+        assert_eq!(names, vec!["Zeta Dork", "Alpha Dork"]);
+    }
+
+    #[test]
+    fn at_equal_rank_the_cheaper_candidate_comes_first_then_the_name() {
+        let names = tied_pool_result(
+            vec![
+                ramp_dork("alpha", "Alpha Dork", 3.0).edhrec_rank(100),
+                ramp_dork("zeta", "Zeta Dork", 1.0).edhrec_rank(100),
+                ramp_dork("beta", "Beta Dork", 1.0).edhrec_rank(100),
+            ],
+            &metrics::Thresholds::default(),
+        );
+        assert_eq!(names, vec!["Beta Dork", "Zeta Dork", "Alpha Dork"]);
+    }
+
+    #[test]
+    fn a_curve_weakness_puts_mana_value_before_edhrec_rank() {
+        let pool = || {
+            vec![
+                ramp_dork("alpha", "Alpha Dork", 3.0).edhrec_rank(1),
+                ramp_dork("zeta", "Zeta Dork", 1.0).edhrec_rank(500),
+            ]
+        };
+        let names = tied_pool_result(pool(), &metrics::Thresholds::default());
+        assert_eq!(names, vec!["Alpha Dork", "Zeta Dork"], "balanced curve");
+
+        let expensive_curve = metrics::Thresholds {
+            max_average_mana_value: 0.5,
+            ..metrics::Thresholds::default()
+        };
+        let names = tied_pool_result(pool(), &expensive_curve);
+        assert_eq!(names, vec!["Zeta Dork", "Alpha Dork"], "curve weakness");
+    }
+
+    #[test]
+    fn the_bucket_cap_keeps_the_best_ranked_cards_not_the_alphabetical_head() {
+        let mut pool: Vec<FixtureCard> = (0..12)
+            .map(|i| ramp_dork(&format!("a-{i}"), &format!("Alpha Dork {i:02}"), 1.0))
+            .collect();
+        pool.push(ramp_dork("zeta", "Zeta Dork", 1.0).edhrec_rank(42));
+        let names = tied_pool_result(pool, &metrics::Thresholds::default());
+
+        assert_eq!(names.len(), 10, "bucket cap unchanged: {names:?}");
+        assert_eq!(names[0], "Zeta Dork", "{names:?}");
+        assert_eq!(
+            names[9], "Alpha Dork 08",
+            "unranked tail by name: {names:?}"
         );
     }
 }
