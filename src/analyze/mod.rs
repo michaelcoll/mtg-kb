@@ -14,7 +14,7 @@ use crate::db::cards::CardsDb;
 use crate::deck_context::DeckContext;
 use crate::decklist::parser::{self, DecklistLine};
 use crate::model::{
-    AnalyzeResult, Bracket, ExternalSources, ResolvedCard, Synergy, UnresolvedLine,
+    AnalyzeResult, Bracket, Card, ExternalSources, ResolvedCard, Synergy, UnresolvedLine,
 };
 
 const REQUIRED_DECK_SIZE: u32 = 100;
@@ -146,20 +146,7 @@ pub fn run_in_bracket(
 
     let synergies = find_synergies(&cards);
 
-    let mut theme_counts: BTreeMap<String, u32> = BTreeMap::new();
-    for resolved in &cards {
-        for theme in &resolved.themes {
-            *theme_counts.entry(theme.clone()).or_insert(0) += resolved.quantity;
-        }
-    }
-    // Le Commandant ne compte pas dans le seuil de Thème majeur, mais ses
-    // propres Thèmes (Corrections comprises) sont majeurs d'office.
-    let major_themes: HashSet<String> = theme_counts
-        .into_iter()
-        .filter(|(_, count)| *count >= MAJOR_THEME_MIN_CARDS)
-        .map(|(theme, _)| theme)
-        .chain(themes::detect_themes(&commander))
-        .collect();
+    let major_themes = major_themes(&cards, &commander);
     let weak_roles = metrics::weak_role_names(&role_counts, thresholds);
     let undersupplied_colors =
         metrics::undersupplied_colors(&mana_base, &commander.color_identity, thresholds);
@@ -189,6 +176,25 @@ pub fn run_in_bracket(
         // Remplies ensuite par `commands::analyze`, hors `--offline`.
         external: ExternalSources::default(),
     })
+}
+
+/// Thèmes majeurs du Deck : portés par au moins `MAJOR_THEME_MIN_CARDS`
+/// Cartes du Deck, ou par le Commandant. Le Commandant ne compte pas dans le
+/// seuil, mais ses propres Thèmes (Corrections comprises) sont majeurs
+/// d'office.
+pub fn major_themes(cards: &[ResolvedCard], commander: &Card) -> HashSet<String> {
+    let mut theme_counts: BTreeMap<String, u32> = BTreeMap::new();
+    for resolved in cards {
+        for theme in &resolved.themes {
+            *theme_counts.entry(theme.clone()).or_insert(0) += resolved.quantity;
+        }
+    }
+    theme_counts
+        .into_iter()
+        .filter(|(_, count)| *count >= MAJOR_THEME_MIN_CARDS)
+        .map(|(theme, _)| theme)
+        .chain(themes::detect_themes(commander))
+        .collect()
 }
 
 fn find_synergies(cards: &[ResolvedCard]) -> Vec<Synergy> {

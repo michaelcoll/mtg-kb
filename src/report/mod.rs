@@ -940,6 +940,7 @@ mod tests {
             synergy: 0.42,
             inclusion_rate: 0.9,
             header: "High Synergy Cards".to_string(),
+            theme: None,
             origins: vec![],
         }];
         let html = render(&model(enriched));
@@ -956,6 +957,7 @@ mod tests {
             synergy: 0.42,
             inclusion_rate: 0.9,
             header: "High Synergy Cards".to_string(),
+            theme: None,
             origins: vec![],
         }];
         // "Rampant Growth" est déjà une Suggestion retenue (voir `sample()`) :
@@ -1050,6 +1052,7 @@ mod tests {
             synergy: 0.42,
             inclusion_rate: 0.9,
             header: "High Synergy Cards".to_string(),
+            theme: None,
             origins: vec![],
         }];
         let mut model = model(enriched);

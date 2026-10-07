@@ -1,6 +1,6 @@
 //! Client EDHREC : endpoint JSON non officiel
-//! `json.edhrec.com/pages/commanders/<slug>.json`, recommandant par
-//! Commandant seul.
+//! `json.edhrec.com/pages/commanders/<slug>.json` pour la page Commandant, et
+//! `<slug>/<thème>.json` pour la page d'un Thème majeur de ce Commandant.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -15,14 +15,15 @@ use crate::deck_context::DeckContext;
 use crate::model::EdhrecRecommendation;
 
 pub trait EdhrecClient {
-    fn fetch(&self, slug: &str) -> Result<String>;
+    /// `page` : chemin sous `pages/commanders/`, sans extension (`Page::path`).
+    fn fetch(&self, page: &str) -> Result<String>;
 }
 
 pub struct HttpEdhrecClient;
 
 impl EdhrecClient for HttpEdhrecClient {
-    fn fetch(&self, slug: &str) -> Result<String> {
-        let url = format!("https://json.edhrec.com/pages/commanders/{slug}.json");
+    fn fetch(&self, page: &str) -> Result<String> {
+        let url = format!("https://json.edhrec.com/pages/commanders/{page}.json");
         let response = reqwest::blocking::get(&url)
             .with_context(|| format!("appel EDHREC ({url})"))?
             .error_for_status()
@@ -131,15 +132,126 @@ fn parse(raw_json: &str) -> Result<Vec<(String, RawMeta)>> {
     Ok(items)
 }
 
+/// Suffixe de page EDHREC des Thèmes non tribaux.
+const THEME_PAGES: &[(&str, &str)] = &[
+    ("tokens", "tokens"),
+    ("+1/+1", "plus-1-plus-1-counters"),
+    ("aristocrats", "aristocrats"),
+    ("artefacts", "artifacts"),
+    ("enchantements", "enchantress"),
+    ("spellslinger", "spellslinger"),
+    ("cimetiere", "reanimator"),
+    ("landfall", "landfall"),
+    ("lifegain", "lifegain"),
+    ("blink", "blink"),
+    ("voltron", "voltron"),
+];
+
+/// Suffixe de page EDHREC des Thèmes `tribal:<sous-type>`, limités aux
+/// tribus qu'EDHREC traite comme thème.
+const TRIBAL_PAGES: &[(&str, &str)] = &[
+    ("Angel", "angels"),
+    ("Assassin", "assassins"),
+    ("Beast", "beasts"),
+    ("Bird", "birds"),
+    ("Cat", "cats"),
+    ("Cleric", "clerics"),
+    ("Demon", "demons"),
+    ("Dinosaur", "dinosaurs"),
+    ("Dog", "dogs"),
+    ("Dragon", "dragons"),
+    ("Dwarf", "dwarves"),
+    ("Eldrazi", "eldrazi"),
+    ("Elemental", "elementals"),
+    ("Elf", "elves"),
+    ("Faerie", "faeries"),
+    ("Giant", "giants"),
+    ("Goblin", "goblins"),
+    ("Horror", "horrors"),
+    ("Human", "humans"),
+    ("Hydra", "hydras"),
+    ("Insect", "insects"),
+    ("Knight", "knights"),
+    ("Merfolk", "merfolk"),
+    ("Ninja", "ninjas"),
+    ("Pirate", "pirates"),
+    ("Rat", "rats"),
+    ("Rogue", "rogues"),
+    ("Saproling", "saprolings"),
+    ("Shaman", "shamans"),
+    ("Sliver", "slivers"),
+    ("Snake", "snakes"),
+    ("Soldier", "soldiers"),
+    ("Sphinx", "sphinxes"),
+    ("Spider", "spiders"),
+    ("Spirit", "spirits"),
+    ("Squirrel", "squirrels"),
+    ("Treefolk", "treefolk"),
+    ("Vampire", "vampires"),
+    ("Warrior", "warriors"),
+    ("Werewolf", "werewolves"),
+    ("Wizard", "wizards"),
+    ("Wolf", "wolves"),
+    ("Zombie", "zombies"),
+];
+
+/// Suffixe de la page EDHREC d'un Thème, relatif à la page Commandant ;
+/// `None` pour un Thème sans équivalent EDHREC, qui ne déclenche aucun appel.
+pub fn theme_page(theme: &str) -> Option<&'static str> {
+    let (table, key) = match theme.strip_prefix("tribal:") {
+        Some(subtype) => (TRIBAL_PAGES, subtype),
+        None => (THEME_PAGES, theme),
+    };
+    table
+        .iter()
+        .find(|(name, _)| *name == key)
+        .map(|(_, page)| *page)
+}
+
+/// Une page EDHREC à interroger : la page Commandant (`theme` absent) ou la
+/// page d'un Thème majeur pour ce Commandant.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Page {
+    /// Chemin sous `pages/commanders/`, sans extension ; sert aussi de clé de
+    /// cache (une par Commandant et Thème).
+    pub path: String,
+    pub theme: Option<String>,
+}
+
+/// Page Commandant, puis une page par Thème majeur de la table, dans l'ordre
+/// alphabétique des Thèmes.
+pub fn pages<'a>(
+    deck: &DeckContext,
+    major_themes: impl IntoIterator<Item = &'a String>,
+) -> Vec<Page> {
+    let commander_slug = slug(deck.commander_name());
+    let mut themes: Vec<&String> = major_themes.into_iter().collect();
+    themes.sort();
+    themes.dedup();
+
+    let theme_pages = themes.into_iter().filter_map(|theme| {
+        theme_page(theme).map(|suffix| Page {
+            path: format!("{commander_slug}/{suffix}"),
+            theme: Some(theme.clone()),
+        })
+    });
+    std::iter::once(Page {
+        path: commander_slug.clone(),
+        theme: None,
+    })
+    .chain(theme_pages)
+    .collect()
+}
+
 pub fn fetch_and_filter(
     client: &dyn EdhrecClient,
     cache_dir: &Path,
     ttl: Duration,
     db: &CardsDb,
     deck: &DeckContext,
+    page: &Page,
 ) -> Result<(Vec<EdhrecRecommendation>, Vec<String>)> {
-    let commander_slug = slug(deck.commander_name());
-    let raw_json = cache::cached_fetch(client, cache_dir, &commander_slug, ttl)?;
+    let raw_json = cache::cached_fetch(client, cache_dir, &page.path, ttl)?;
     let items = parse(&raw_json)?;
 
     let (resolved, unresolved_names) = resolve_and_filter(items, db, deck)?;
@@ -151,6 +263,7 @@ pub fn fetch_and_filter(
             synergy: meta.synergy,
             inclusion_rate: meta.inclusion_rate,
             header: meta.header,
+            theme: page.theme.clone(),
             origins: vec![],
         })
         .collect();
@@ -164,6 +277,33 @@ mod tests {
     #[test]
     fn slugifies_apostrophes_and_commas() {
         assert_eq!(slug("Atraxa, Praetors' Voice"), "atraxa-praetors-voice");
+    }
+
+    #[test]
+    fn the_table_covers_every_non_tribal_theme() {
+        for (theme, page) in [
+            ("tokens", "tokens"),
+            ("+1/+1", "plus-1-plus-1-counters"),
+            ("aristocrats", "aristocrats"),
+            ("artefacts", "artifacts"),
+            ("enchantements", "enchantress"),
+            ("spellslinger", "spellslinger"),
+            ("cimetiere", "reanimator"),
+            ("landfall", "landfall"),
+            ("lifegain", "lifegain"),
+            ("blink", "blink"),
+            ("voltron", "voltron"),
+        ] {
+            assert_eq!(theme_page(theme), Some(page), "{theme}");
+        }
+    }
+
+    #[test]
+    fn tribal_themes_map_to_their_plural_page_when_known() {
+        assert_eq!(theme_page("tribal:Elf"), Some("elves"));
+        assert_eq!(theme_page("tribal:Zombie"), Some("zombies"));
+        assert_eq!(theme_page("tribal:Homunculus"), None);
+        assert_eq!(theme_page("inconnu"), None);
     }
 
     #[test]
@@ -269,12 +409,14 @@ mod tests {
         };
         let cache_dir = tempfile::tempdir().unwrap();
         let commander = crate::model::Card::named("Krenko, Mob Boss", &["R"]);
+        let deck = DeckContext::new(&commander, []);
         fetch_and_filter(
             &client,
             cache_dir.path(),
             Duration::from_secs(7 * 86400),
             &db,
-            &DeckContext::new(&commander, []),
+            &deck,
+            &pages(&deck, [])[0],
         )
         .unwrap();
         assert_eq!(*client.slugs.borrow(), vec!["krenko-mob-boss".to_string()]);
@@ -286,12 +428,14 @@ mod tests {
         let client = StubClient(sample_json());
         let cache_dir = tempfile::tempdir().unwrap();
         let commander = crate::model::Card::named("Test Commander", &["G"]);
+        let deck = DeckContext::new(&commander, []);
         let (recommendations, unresolved) = fetch_and_filter(
             &client,
             cache_dir.path(),
             Duration::from_secs(7 * 86400),
             &db,
-            &DeckContext::new(&commander, []),
+            &deck,
+            &pages(&deck, [])[0],
         )
         .unwrap();
 

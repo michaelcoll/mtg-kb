@@ -1,5 +1,6 @@
-//! Cache EDHREC : une réponse par slug de Commandant, sous
-//! `<cache_dir>/<slug>.json`, réutilisée tant qu'elle a moins de `ttl`.
+//! Cache EDHREC : une réponse par page (Commandant, ou Commandant et Thème),
+//! sous `<cache_dir>/<page>.json`, réutilisée tant qu'elle a moins de `ttl`.
+//! Une page de Thème `<slug>/<thème>` est rangée sous `<cache_dir>/<slug>/`.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -8,29 +9,29 @@ use anyhow::{Context, Result};
 
 use super::edhrec::EdhrecClient;
 
-/// Sert le contenu en cache pour `slug` si son `mtime` a moins de `ttl`,
+/// Sert le contenu en cache pour `page` si son `mtime` a moins de `ttl`,
 /// sinon interroge `client` et rafraîchit le cache.
 pub fn cached_fetch(
     client: &dyn EdhrecClient,
     cache_dir: &Path,
-    slug: &str,
+    page: &str,
     ttl: Duration,
 ) -> Result<String> {
-    let path = cache_path(cache_dir, slug);
+    let path = cache_path(cache_dir, page);
     if let Some(content) = read_if_fresh(&path, ttl) {
         return Ok(content);
     }
 
-    let body = client.fetch(slug)?;
-    std::fs::create_dir_all(cache_dir)
-        .with_context(|| format!("création du cache {}", cache_dir.display()))?;
+    let body = client.fetch(page)?;
+    let dir = path.parent().unwrap_or(cache_dir);
+    std::fs::create_dir_all(dir).with_context(|| format!("création du cache {}", dir.display()))?;
     std::fs::write(&path, &body)
         .with_context(|| format!("écriture du cache {}", path.display()))?;
     Ok(body)
 }
 
-fn cache_path(cache_dir: &Path, slug: &str) -> PathBuf {
-    cache_dir.join(format!("{slug}.json"))
+fn cache_path(cache_dir: &Path, page: &str) -> PathBuf {
+    cache_dir.join(format!("{page}.json"))
 }
 
 fn read_if_fresh(path: &Path, ttl: Duration) -> Option<String> {
