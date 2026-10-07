@@ -10,7 +10,6 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 
 use super::{cache, resolve_and_filter};
-use crate::analyze::ranking::sort_desc_by_score_then_name;
 use crate::db::cards::CardsDb;
 use crate::deck_context::DeckContext;
 use crate::model::EdhrecRecommendation;
@@ -90,7 +89,8 @@ struct RawMeta {
     header: String,
 }
 
-/// Dédupliqué par nom en gardant la meilleure synergie.
+/// Dédupliqué par nom en gardant la meilleure synergie. Trié par synergie
+/// décroissante, puis taux d'inclusion décroissant, puis nom.
 fn parse(raw_json: &str) -> Result<Vec<(String, RawMeta)>> {
     let parsed: EdhrecResponse =
         serde_json::from_str(raw_json).context("structure JSON EDHREC inattendue")?;
@@ -122,7 +122,12 @@ fn parse(raw_json: &str) -> Result<Vec<(String, RawMeta)>> {
     }
 
     let mut items: Vec<(String, RawMeta)> = merged.into_iter().collect();
-    sort_desc_by_score_then_name(&mut items, |i| i.1.synergy, |i| &i.0);
+    items.sort_by(|(a_name, a), (b_name, b)| {
+        b.synergy
+            .total_cmp(&a.synergy)
+            .then_with(|| b.inclusion_rate.total_cmp(&a.inclusion_rate))
+            .then_with(|| a_name.cmp(b_name))
+    });
     Ok(items)
 }
 

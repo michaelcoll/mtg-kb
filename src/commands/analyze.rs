@@ -256,6 +256,64 @@ mod tests {
     }
 
     #[test]
+    fn edhrec_ties_on_synergy_are_broken_by_inclusion_rate_then_name() {
+        let (_dir, db) = CardsFixture::new()
+            .cards([
+                FixtureCard::new("atraxa", "Atraxa, Praetors' Voice")
+                    .types("Creature")
+                    .supertypes("Legendary")
+                    .identity("B, G, U, W"),
+                FixtureCard::new("forest", "Forest")
+                    .types("Land")
+                    .supertypes("Basic"),
+                FixtureCard::new("cultivate", "Cultivate").identity("G"),
+                FixtureCard::new("kodama", "Kodama's Reach").identity("G"),
+                FixtureCard::new("rampant", "Rampant Growth").identity("G"),
+                FixtureCard::new("elves", "Llanowar Elves").identity("G"),
+            ])
+            .build();
+        let cache_dir = tempfile::tempdir().unwrap();
+        let edhrec_json = serde_json::json!({
+            "container": {"json_dict": {"cardlists": [
+                {"header": "Top Cards", "cardviews": [
+                    {"name": "Cultivate", "synergy": 0.2, "num_decks": 1, "potential_decks": 10},
+                    {"name": "Rampant Growth", "synergy": 0.2, "num_decks": 8, "potential_decks": 10},
+                    {"name": "Kodama's Reach", "synergy": 0.2, "num_decks": 8, "potential_decks": 10},
+                    {"name": "Llanowar Elves", "synergy": 0.5, "num_decks": 1, "potential_decks": 10}
+                ]}
+            ]}}
+        })
+        .to_string();
+
+        let result = analyze_deck(
+            &deck_input(),
+            &db,
+            &Thresholds::default(),
+            false,
+            &StubEdhrecClient(edhrec_json),
+            &StubRecommanderClient(r#"{"data": {"recommendations": []}}"#.to_string()),
+            cache_dir.path(),
+        )
+        .unwrap();
+
+        let names: Vec<&str> = result
+            .external
+            .edhrec_recommendations
+            .iter()
+            .map(|r| r.card.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "Llanowar Elves",
+                "Kodama's Reach",
+                "Rampant Growth",
+                "Cultivate"
+            ]
+        );
+    }
+
+    #[test]
     fn a_failing_source_is_reported_without_failing_the_whole_analysis() {
         let (_dir, db) = fixture_db();
         let cache_dir = tempfile::tempdir().unwrap();
