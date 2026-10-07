@@ -27,11 +27,11 @@ pub fn find_candidates(
         .into_iter()
         .filter(|card| deck.eligibility(card).is_ok() && !card.is_basic_land())
         .filter_map(|card| {
-            let card_themes = themes::detect_themes(&card);
-            let matched_themes: Vec<String> = card_themes
-                .into_iter()
-                .filter(|t| major_themes.contains(t))
-                .collect();
+            let (matched_themes, theme_score): (Vec<String>, Vec<u32>) =
+                themes::detect_weighted_themes(&card)
+                    .into_iter()
+                    .filter(|(t, _)| major_themes.contains(t))
+                    .unzip();
 
             let card_roles = super::metrics::detect_roles(&card);
             let matched_weak_roles: Vec<String> = card_roles
@@ -39,7 +39,7 @@ pub fn find_candidates(
                 .filter(|r| weak_roles.contains(r))
                 .collect();
 
-            let score = (matched_themes.len() as u32) + 2 * (matched_weak_roles.len() as u32);
+            let score = theme_score.iter().sum::<u32>() + 2 * (matched_weak_roles.len() as u32);
             if score == 0 {
                 return None;
             }
