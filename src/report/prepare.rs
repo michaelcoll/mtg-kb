@@ -10,8 +10,9 @@ use super::validate::validate_suggestions;
 use crate::analyze::metrics::detect_roles;
 use crate::analyze::origins::origins_of;
 use crate::db::cards::CardsDb;
+use crate::deck_context::DeckContext;
 use crate::model::Origin;
-use crate::model::{AnalyzeResult, Card, EnrichedAnalysis, ReferencePrinting, Verdict};
+use crate::model::{AnalyzeResult, Bracket, Card, EnrichedAnalysis, ReferencePrinting, Verdict};
 
 /// Ce que `prepare` lit de la Base cartes (Corrections comprises, ADR 0005).
 pub trait PrintingLookup {
@@ -42,9 +43,39 @@ pub struct ValidatedSuggestion {
     pub card_to_remove: Option<String>,
     pub printing: Option<ReferencePrinting>,
     pub card_to_remove_printing: Option<ReferencePrinting>,
+    pub card_to_remove_game_changer: bool,
     pub origins: Vec<Origin>,
+    pub game_changer: bool,
+    /// Salt EDHREC de la Carte ; `None` : inconnue.
+    pub salt: Option<f64>,
     /// Rôles à seuil que l'échange affaiblit ; n'empêche pas le Rapport.
     pub swap_warnings: Vec<SwapWarning>,
+}
+
+impl ValidatedSuggestion {
+    /// Consensus : la Carte est proposée par plusieurs Origines.
+    pub fn is_consensus(&self) -> bool {
+        self.origins.len() > 1
+    }
+}
+
+/// Game Changers du Deck (Commandant compris) face à la limite du Bracket.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct GameChangerTally {
+    pub in_deck: Vec<String>,
+    pub bracket: Option<Bracket>,
+    /// `None` : sans Bracket, ou Bracket sans limite.
+    pub limit: Option<usize>,
+}
+
+impl GameChangerTally {
+    fn of(deck: &DeckContext) -> Self {
+        Self {
+            in_deck: deck.game_changers().to_vec(),
+            bracket: deck.bracket(),
+            limit: deck.game_changer_limit(),
+        }
+    }
 }
 
 /// Entrée de `render` : Suggestions validées et Impressions de référence
@@ -56,6 +87,7 @@ pub struct ReportModel {
     pub commander_printing: Option<ReferencePrinting>,
     pub suggestions: Vec<ValidatedSuggestion>,
     pub card_printings: CardPrintings,
+    pub game_changers: GameChangerTally,
 }
 
 #[derive(Debug)]
@@ -131,18 +163,17 @@ pub fn prepare(
         suggestions,
     } = enriched;
 
+    let game_changers = GameChangerTally::of(&DeckContext::from_analysis(&analysis));
     let commander_printing = lookup.reference_printing(&analysis.commander.name)?;
     let suggestions = suggestions
         .into_iter()
         .map(|s| {
             let printing = lookup.reference_printing(&s.card_name)?;
+            // Validée plus haut : la Suggestion est une Carte connue.
+            let card = lookup.card(&s.card_name)?;
             let (card_to_remove_printing, swap_warnings) = match &s.card_to_remove {
                 Some(name) => {
-                    // Validée plus haut : la Suggestion est une Carte connue.
-                    let suggestion_roles = lookup
-                        .card(&s.card_name)?
-                        .map(|card| detect_roles(&card))
-                        .unwrap_or_default();
+                    let suggestion_roles = card.as_ref().map(detect_roles).unwrap_or_default();
                     (
                         lookup.reference_printing(name)?,
                         swap_warnings(&analysis, &suggestion_roles, name),
@@ -152,7 +183,13 @@ pub fn prepare(
             };
             Ok(ValidatedSuggestion {
                 swap_warnings,
+                card_to_remove_game_changer: s
+                    .card_to_remove
+                    .as_ref()
+                    .is_some_and(|name| game_changers.in_deck.contains(name)),
                 origins: origins_of(&analysis, &s.card_name),
+                game_changer: card.as_ref().is_some_and(|c| c.game_changer),
+                salt: card.as_ref().and_then(|c| c.salt),
                 card_name: s.card_name,
                 justification: s.justification,
                 card_to_remove: s.card_to_remove,
@@ -175,6 +212,7 @@ pub fn prepare(
         commander_printing,
         suggestions,
         card_printings,
+        game_changers,
     })
 }
 
@@ -476,6 +514,132 @@ mod tests {
     fn without_bracket_a_game_changer_suggestion_is_accepted() {
         let enriched = sample(vec![suggestion("Survival of the Fittest", None)]);
         assert!(prepare(enriched, &lookup_with_game_changers()).is_ok());
+    }
+
+    #[test]
+    fn a_game_changer_suggestion_carries_a_badge() {
+        let enriched = sample(vec![
+            suggestion("Survival of the Fittest", None),
+            suggestion("Beast Within", None),
+        ]);
+        let model = prepare(enriched, &lookup_with_game_changers()).unwrap();
+
+        let flags: Vec<(&str, bool)> = model
+            .suggestions
+            .iter()
+            .map(|s| (s.card_name.as_str(), s.game_changer))
+            .collect();
+        assert_eq!(
+            flags,
+            vec![("Survival of the Fittest", true), ("Beast Within", false)]
+        );
+        let html = super::super::render(&model);
+        assert_eq!(
+            html.matches("class=\"badge badge-game-changer\"").count(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_suggestion_with_a_known_salt_shows_an_indicator() {
+        let salty = Card {
+            salt: Some(2.314),
+            ..green("Craterhoof Behemoth")
+        };
+        let enriched = sample(vec![
+            suggestion("Craterhoof Behemoth", None),
+            suggestion("Beast Within", None),
+        ]);
+        let model = prepare(enriched, &lookup().with(salty)).unwrap();
+
+        let salts: Vec<Option<f64>> = model.suggestions.iter().map(|s| s.salt).collect();
+        assert_eq!(salts, vec![Some(2.314), None]);
+        let html = super::super::render(&model);
+        assert_eq!(html.matches("class=\"badge badge-salt\"").count(), 1);
+        assert!(html.contains("salt 2.31"), "{html}");
+    }
+
+    #[test]
+    fn a_suggestion_with_several_origins_is_highlighted_as_consensus() {
+        let mut enriched = sample(vec![
+            suggestion("Cultivate", None),
+            suggestion("Rampant Growth", None),
+        ]);
+        enriched.analysis.candidates.push(Candidate {
+            card: green("Cultivate"),
+            score: 2,
+            matched_themes: vec![],
+            matched_weak_roles: vec!["ramp".to_string()],
+            origins: vec![],
+        });
+        let model = prepare(enriched, &lookup()).unwrap();
+
+        assert_eq!(
+            model.suggestions[0].origins,
+            vec![Origin::Kb, Origin::Recommander]
+        );
+        let html = super::super::render(&model);
+        assert_eq!(
+            html.matches("class=\"suggestion-row consensus\"").count(),
+            1,
+            "{html}"
+        );
+        assert_eq!(html.matches("class=\"badge badge-consensus\"").count(), 1);
+    }
+
+    #[test]
+    fn deck_game_changers_are_counted_against_the_bracket_limit() {
+        let enriched = enriched_json_in_bracket(
+            3,
+            &["Demonic Tutor", "Cyclonic Rift"],
+            vec![suggestion("Beast Within", Some("Cyclonic Rift"))],
+        );
+        let model = prepare(enriched, &lookup_with_game_changers()).unwrap();
+
+        assert_eq!(
+            model.game_changers,
+            GameChangerTally {
+                in_deck: vec!["Demonic Tutor".to_string(), "Cyclonic Rift".to_string()],
+                bracket: Some(Bracket::try_from(3).unwrap()),
+                limit: Some(3),
+            }
+        );
+        assert!(model.suggestions[0].card_to_remove_game_changer);
+        let html = super::super::render(&model);
+        assert!(html.contains("2 Game Changers / 3"), "{html}");
+        // Les deux Cartes du Deck, plus la Carte à retirer.
+        assert_eq!(
+            html.matches("class=\"badge badge-game-changer\"").count(),
+            3
+        );
+    }
+
+    #[test]
+    fn without_bracket_only_the_deck_game_changer_count_is_shown() {
+        let mut enriched = sample(vec![]);
+        enriched.analysis.cards.push(ResolvedCard {
+            quantity: 1,
+            roles: vec![],
+            themes: vec![],
+            card: game_changer("Demonic Tutor"),
+        });
+        let model = prepare(enriched, &lookup()).unwrap();
+
+        assert_eq!(model.game_changers.limit, None);
+        let html = super::super::render(&model);
+        assert!(html.contains("1 Game Changer<"), "{html}");
+        assert!(!html.contains("Game Changer /"), "{html}");
+        assert!(html.contains("Demonic Tutor"));
+    }
+
+    #[test]
+    fn a_bracket_without_limit_shows_the_count_without_limit() {
+        let enriched = enriched_json_in_bracket(4, &["Demonic Tutor"], vec![]);
+        let model = prepare(enriched, &lookup()).unwrap();
+
+        let html = super::super::render(&model);
+        assert!(html.contains("1 Game Changer<"), "{html}");
+        assert!(html.contains("Bracket 4 : sans limite"), "{html}");
     }
 
     fn with_roles(mut card: Card, roles: &[&str]) -> Card {
