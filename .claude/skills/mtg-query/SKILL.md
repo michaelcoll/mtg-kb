@@ -31,7 +31,10 @@ which deduplicate Printings by oracle name and return stable JSON.
     (inclusive bounds, combinable with `--mana-value` only if consistent)
   - `--role <role>`: detected Role (same detection as `kb analyze`: `ramp`,
     `pioche` (card draw), `removal_cible` (targeted removal), `wipe`,
-    `protection`, `terrain` (land)), repeatable, combined with AND
+    `protection` (hexproof, indestructible), `contresort` (counterspell),
+    `tutor` (nonland library search), `recursion` (return from graveyard),
+    `grave_hate` (graveyard exile), `terrain` (land)), repeatable, combined
+    with AND
   - `--theme <theme>`: detected Theme (same detection as `kb analyze`:
     `tokens`, `+1/+1`, `aristocrats`, `tribal:<subtype>`), repeatable,
     combined with AND
