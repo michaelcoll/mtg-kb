@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use crate::db::cards::CardsDb;
 use crate::deck_context::DeckContext;
-use crate::model::Candidate;
+use crate::model::{Candidate, Card};
 
 use super::ranking::{TieBreak, sort_candidates};
 use super::themes;
@@ -15,15 +15,27 @@ const CANDIDATE_LIMIT_PER_BUCKET: usize = 10;
 /// `CANDIDATE_LIMIT_PER_BUCKET` par Rôle sous-représenté et par Thème majeur,
 /// dédupliqués par nom. Les terrains de base ne sont jamais Candidats. Un Candidat porte tous les Rôles/Thèmes du Deck qu'il
 /// matche. Les Cartes qui n'en matchent aucun sont écartées. À score égal,
-/// `tie_break` départage, à la sélection par panier comme au tri final.
+/// `tie_break` départage, à la sélection par panier comme au tri final. Un
+/// terrain Candidat gagne un point par couleur sous-alimentée qu'il produit.
 pub fn find_candidates(
     db: &CardsDb,
     deck: &DeckContext,
     major_themes: &HashSet<String>,
     weak_roles: &[String],
+    undersupplied_colors: &[String],
     tie_break: TieBreak,
 ) -> Result<Vec<Candidate>> {
     let pool = db.commander_pool(deck.commander_identity())?;
+    let undersupplied_colors_produced = |card: &Card| -> u32 {
+        if undersupplied_colors.is_empty() {
+            return 0;
+        }
+        let produced = super::metrics::land_colors(card, deck.commander_identity().colors());
+        undersupplied_colors
+            .iter()
+            .filter(|color| produced.contains(color.as_str()))
+            .count() as u32
+    };
 
     let scored: Vec<Candidate> = pool
         .into_iter()
@@ -46,8 +58,8 @@ pub fn find_candidates(
                 return None;
             }
             Some(Candidate {
+                score: score + undersupplied_colors_produced(&card),
                 card,
-                score,
                 matched_themes,
                 matched_weak_roles,
                 origins: vec![],
@@ -187,6 +199,7 @@ mod tests {
             &deck(&["G"], &["Rampant Growth"]),
             &HashSet::new(),
             &["ramp".to_string()],
+            &[],
             TieBreak::EdhrecRankFirst,
         )
         .unwrap();
@@ -214,6 +227,7 @@ mod tests {
             &deck(&["G", "R"], &[]),
             &major_themes,
             &["ramp".to_string()],
+            &[],
             TieBreak::EdhrecRankFirst,
         )
         .unwrap();
@@ -239,6 +253,7 @@ mod tests {
             &deck(&["G"], &[]),
             &HashSet::new(),
             &[],
+            &[],
             TieBreak::EdhrecRankFirst,
         )
         .unwrap();
@@ -257,6 +272,7 @@ mod tests {
             &deck(&["G"], &[]),
             &HashSet::new(),
             &["ramp".to_string()],
+            &[],
             TieBreak::EdhrecRankFirst,
         )
         .unwrap();
@@ -279,6 +295,7 @@ mod tests {
             &deck(&["G"], &[]),
             &HashSet::new(),
             &["ramp".to_string()],
+            &[],
             TieBreak::EdhrecRankFirst,
         )
         .unwrap();
@@ -306,6 +323,7 @@ mod tests {
             &deck(&["G"], &[]),
             &major_themes,
             &[],
+            &[],
             TieBreak::EdhrecRankFirst,
         )
         .unwrap();
@@ -329,6 +347,7 @@ mod tests {
             &deck(&["G"], &[]),
             &major_themes,
             &["ramp".to_string()],
+            &[],
             TieBreak::EdhrecRankFirst,
         )
         .unwrap();

@@ -118,6 +118,10 @@ impl ColorIdentity {
         Self::new(letters.chars().map(String::from))
     }
 
+    pub fn colors(&self) -> &[String] {
+        &self.0
+    }
+
     pub fn is_subset_of(&self, other: &ColorIdentity) -> bool {
         self.0.iter().all(|c| other.0.contains(c))
     }

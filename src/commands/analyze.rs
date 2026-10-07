@@ -882,3 +882,198 @@ mod land_candidates_tests {
         assert_eq!(unique.len(), result.candidates.len());
     }
 }
+
+/// Point faible « couleur sous-alimentée » et terrains Candidats qui la
+/// corrigent (#95).
+#[cfg(test)]
+mod undersupplied_color_tests {
+    use super::*;
+    use crate::db::fixture::{CardsFixture, FixtureCard};
+
+    fn basic(uuid: &str, name: &str, color: &str) -> FixtureCard {
+        FixtureCard::new(uuid, name)
+            .types("Land")
+            .subtypes(name)
+            .supertypes("Basic")
+            .text(&format!("({{T}}: Add {{{color}}}.)"))
+            .identity(color)
+    }
+
+    fn land(uuid: &str, name: &str, text: &str, identity: &str) -> FixtureCard {
+        FixtureCard::new(uuid, name)
+            .types("Land")
+            .text(text)
+            .identity(identity)
+    }
+
+    /// Commandants Simic ({G}{U}) et mono-vert ({G}), terrains de base,
+    /// Wastes, et un pool de terrains non-base : vert seul, bleu seul, dual.
+    fn fixture_db() -> (tempfile::TempDir, CardsDb) {
+        CardsFixture::new()
+            .cards([
+                FixtureCard::new("simic", "Simic Commander")
+                    .mana("{G}{U}", 2.0)
+                    .types("Creature")
+                    .supertypes("Legendary")
+                    .identity("G, U"),
+                FixtureCard::new("mono", "Green Commander")
+                    .mana("{G}", 1.0)
+                    .types("Creature")
+                    .supertypes("Legendary")
+                    .identity("G"),
+                basic("forest", "Forest", "G"),
+                basic("island", "Island", "U"),
+                FixtureCard::new("wastes", "Wastes")
+                    .types("Land")
+                    .supertypes("Basic")
+                    .text("({T}: Add {C}.)"),
+                land("grove", "Alpha Grove", "{T}: Add {G}.", "G"),
+                land("lagoon", "Zeta Lagoon", "{T}: Add {U}.", "U"),
+                land("pool", "Breeding Pool", "{T}: Add {G} or {U}.", "G, U"),
+            ])
+            .build()
+    }
+
+    struct NoEdhrec;
+    impl EdhrecClient for NoEdhrec {
+        fn fetch(&self, _slug: &str) -> Result<String> {
+            panic!("--offline ne doit jamais appeler EDHREC")
+        }
+    }
+
+    struct NoRecommander;
+    impl RecommanderClient for NoRecommander {
+        fn fetch(&self, _body: &serde_json::Value) -> Result<String> {
+            panic!("--offline ne doit jamais appeler Recommander")
+        }
+    }
+
+    fn analyze_offline(db: &CardsDb, input: &str, thresholds: &Thresholds) -> AnalyzeResult {
+        let cache_dir = tempfile::tempdir().unwrap();
+        analyze_deck(
+            input,
+            db,
+            thresholds,
+            true,
+            &NoEdhrec,
+            &NoRecommander,
+            cache_dir.path(),
+        )
+        .unwrap()
+    }
+
+    /// Deck Simic : le Commandant porte 50 % de symboles G et 50 % de U.
+    fn simic_deck(forests: u32, islands: u32) -> String {
+        format!("Commander\n1 Simic Commander\n\nDeck\n{forests} Forest\n{islands} Island\n")
+    }
+
+    fn color_weaknesses(result: &AnalyzeResult) -> Vec<&str> {
+        result
+            .weaknesses
+            .iter()
+            .filter(|w| w.starts_with("couleur sous-alimentée"))
+            .map(String::as_str)
+            .collect()
+    }
+
+    #[test]
+    fn a_color_with_30_percent_of_sources_and_50_percent_of_symbols_is_undersupplied() {
+        let (_dir, db) = fixture_db();
+        let result = analyze_offline(&db, &simic_deck(21, 9), &Thresholds::default());
+
+        assert_eq!(
+            color_weaknesses(&result),
+            vec![
+                "couleur sous-alimentée : U porte 50 % des symboles de mana mais 30 % des \
+                 sources (écart > 10 points)"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_gap_equal_to_the_threshold_is_not_a_weakness() {
+        let (_dir, db) = fixture_db();
+        // U : 50 % des symboles, 40 % des sources.
+        let result = analyze_offline(&db, &simic_deck(6, 4), &Thresholds::default());
+
+        assert!(
+            color_weaknesses(&result).is_empty(),
+            "{:?}",
+            result.weaknesses
+        );
+    }
+
+    #[test]
+    fn the_gap_threshold_is_configurable() {
+        let (_dir, db) = fixture_db();
+        let thresholds = Thresholds {
+            max_color_source_gap: 20.0,
+            ..Thresholds::default()
+        };
+        let result = analyze_offline(&db, &simic_deck(21, 9), &thresholds);
+        assert!(
+            color_weaknesses(&result).is_empty(),
+            "{:?}",
+            result.weaknesses
+        );
+
+        let thresholds = Thresholds {
+            max_color_source_gap: 5.0,
+            ..Thresholds::default()
+        };
+        let result = analyze_offline(&db, &simic_deck(6, 4), &thresholds);
+        assert_eq!(
+            color_weaknesses(&result),
+            vec![
+                "couleur sous-alimentée : U porte 50 % des symboles de mana mais 40 % des \
+                 sources (écart > 5 points)"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_monocolor_deck_never_has_an_undersupplied_color() {
+        let (_dir, db) = fixture_db();
+        // G : 100 % des symboles, 1 source sur 21 terrains.
+        let input = "Commander\n1 Green Commander\n\nDeck\n1 Forest\n20 Wastes\n";
+        let result = analyze_offline(&db, input, &Thresholds::default());
+
+        assert!(
+            color_weaknesses(&result).is_empty(),
+            "{:?}",
+            result.weaknesses
+        );
+    }
+
+    fn land_candidate_names(result: &AnalyzeResult) -> Vec<&str> {
+        result
+            .candidates
+            .iter()
+            .filter(|c| c.matched_weak_roles.iter().any(|r| r == "terrain"))
+            .map(|c| c.card.name.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn land_candidates_producing_an_undersupplied_color_come_first() {
+        let (_dir, db) = fixture_db();
+        // 30 terrains (< 35) et U sous-alimenté.
+        let result = analyze_offline(&db, &simic_deck(21, 9), &Thresholds::default());
+
+        assert_eq!(
+            land_candidate_names(&result),
+            vec!["Breeding Pool", "Zeta Lagoon", "Alpha Grove"]
+        );
+    }
+
+    #[test]
+    fn without_an_undersupplied_color_land_candidates_keep_their_usual_order() {
+        let (_dir, db) = fixture_db();
+        let result = analyze_offline(&db, &simic_deck(15, 15), &Thresholds::default());
+
+        assert_eq!(
+            land_candidate_names(&result),
+            vec!["Alpha Grove", "Breeding Pool", "Zeta Lagoon"]
+        );
+    }
+}
