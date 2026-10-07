@@ -375,12 +375,38 @@ pub struct Synergy {
     pub cards: Vec<String>,
 }
 
+/// Provenance d'une Carte proposée (CONTEXT.md, Origine) : Candidat de `kb`,
+/// Recommandation externe d'une Source, sinon investigation hors de ces listes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Origin {
+    Kb,
+    Edhrec,
+    Recommander,
+    Investigation,
+}
+
+impl Origin {
+    /// Libellé du badge dans le Rapport d'analyse, identique à la valeur JSON.
+    pub fn label(self) -> &'static str {
+        match self {
+            Origin::Kb => "kb",
+            Origin::Edhrec => "edhrec",
+            Origin::Recommander => "recommander",
+            Origin::Investigation => "investigation",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Candidate {
     pub card: Card,
     pub score: u32,
     pub matched_themes: Vec<String>,
     pub matched_weak_roles: Vec<String>,
+    /// Absentes d'un JSON antérieur aux Origines.
+    #[serde(default)]
+    pub origins: Vec<Origin>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -391,12 +417,16 @@ pub struct EdhrecRecommendation {
     pub inclusion_rate: f64,
     /// Liste EDHREC d'origine (ex. "High Synergy Cards").
     pub header: String,
+    #[serde(default)]
+    pub origins: Vec<Origin>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RecommanderRecommendation {
     pub card: Card,
     pub score: f64,
+    #[serde(default)]
+    pub origins: Vec<Origin>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

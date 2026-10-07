@@ -89,7 +89,11 @@ pub fn fetch_and_filter(
 
     let recommendations = resolved
         .into_iter()
-        .map(|(card, score)| RecommanderRecommendation { card, score })
+        .map(|(card, score)| RecommanderRecommendation {
+            card,
+            score,
+            origins: vec![],
+        })
         .collect();
     Ok((recommendations, unresolved_names))
 }

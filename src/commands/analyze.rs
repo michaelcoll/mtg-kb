@@ -51,6 +51,7 @@ fn analyze_deck(
             edhrec_cache_dir,
         );
     }
+    analyze::origins::assign_origins(&mut result);
 
     Ok(result)
 }
@@ -59,6 +60,7 @@ fn analyze_deck(
 mod tests {
     use super::*;
     use crate::db::fixture::{CardsFixture, FixtureCard};
+    use crate::model::Origin;
 
     fn fixture_db() -> (tempfile::TempDir, CardsDb) {
         CardsFixture::new()
@@ -72,6 +74,11 @@ mod tests {
                     .supertypes("Basic"),
                 FixtureCard::new("rampant", "Rampant Growth")
                     .mana("{1}{G}", 2.0)
+                    .types("Sorcery")
+                    .text("Search your library for a basic land card, put that card onto the battlefield tapped, then shuffle.")
+                    .identity("G"),
+                FixtureCard::new("cultivate", "Cultivate")
+                    .mana("{2}{G}", 3.0)
                     .types("Sorcery")
                     .identity("G"),
             ])
@@ -384,6 +391,175 @@ mod tests {
         assert_eq!(parsed.commander.edhrec_rank, None);
         assert_eq!(parsed.commander.salt, None);
         assert!(!parsed.commander.game_changer);
+    }
+
+    fn edhrec_json_with(names: &[&str]) -> String {
+        let cardviews: Vec<_> = names
+            .iter()
+            .map(|n| serde_json::json!({"name": n, "synergy": 0.2, "num_decks": 1, "potential_decks": 2}))
+            .collect();
+        serde_json::json!({
+            "container": {"json_dict": {"cardlists": [
+                {"header": "Top Cards", "cardviews": cardviews}
+            ]}}
+        })
+        .to_string()
+    }
+
+    fn recommander_json_with(names: &[&str]) -> String {
+        let recommendations: Vec<_> = names
+            .iter()
+            .map(|n| serde_json::json!({"name": n, "score": 4.0}))
+            .collect();
+        serde_json::json!({"data": {"recommendations": recommendations}}).to_string()
+    }
+
+    /// Origines par nom de Carte, triées par nom (l'ordre des listes n'est
+    /// pas l'objet de ces tests).
+    fn origins_by_name<'a>(
+        cards: impl Iterator<Item = (&'a str, &'a [Origin])>,
+    ) -> Vec<(&'a str, Vec<Origin>)> {
+        let mut by_name: Vec<_> = cards.map(|(n, o)| (n, o.to_vec())).collect();
+        by_name.sort_by_key(|(n, _)| *n);
+        by_name
+    }
+
+    #[test]
+    fn a_card_in_candidates_and_edhrec_carries_both_origins_in_both_lists() {
+        let (_dir, db) = fixture_db();
+        let cache_dir = tempfile::tempdir().unwrap();
+        let result = analyze_deck(
+            &deck_input(),
+            &db,
+            &Thresholds::default(),
+            false,
+            &StubEdhrecClient(edhrec_json_with(&["Rampant Growth", "Cultivate"])),
+            &StubRecommanderClient(recommander_json_with(&["Cultivate"])),
+            cache_dir.path(),
+        )
+        .unwrap();
+
+        let candidate = result
+            .candidates
+            .iter()
+            .find(|c| c.card.name == "Rampant Growth")
+            .expect("Rampant Growth est un Candidat ramp");
+        assert_eq!(candidate.origins, vec![Origin::Kb, Origin::Edhrec]);
+        assert_eq!(
+            origins_by_name(
+                result
+                    .external
+                    .edhrec_recommendations
+                    .iter()
+                    .map(|r| (r.card.name.as_str(), r.origins.as_slice()))
+            ),
+            vec![
+                ("Cultivate", vec![Origin::Edhrec, Origin::Recommander]),
+                ("Rampant Growth", vec![Origin::Kb, Origin::Edhrec]),
+            ]
+        );
+        assert_eq!(
+            origins_by_name(
+                result
+                    .external
+                    .recommander_recommendations
+                    .iter()
+                    .map(|r| (r.card.name.as_str(), r.origins.as_slice()))
+            ),
+            vec![("Cultivate", vec![Origin::Edhrec, Origin::Recommander])]
+        );
+    }
+
+    #[test]
+    fn a_card_in_a_single_list_carries_a_single_origin() {
+        let (_dir, db) = fixture_db();
+        let cache_dir = tempfile::tempdir().unwrap();
+        let result = analyze_deck(
+            &deck_input(),
+            &db,
+            &Thresholds::default(),
+            false,
+            &StubEdhrecClient(edhrec_json_with(&["Cultivate"])),
+            &StubRecommanderClient(recommander_json_with(&[])),
+            cache_dir.path(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            origins_by_name(
+                result
+                    .candidates
+                    .iter()
+                    .map(|c| (c.card.name.as_str(), c.origins.as_slice()))
+            ),
+            vec![("Rampant Growth", vec![Origin::Kb])]
+        );
+        assert_eq!(
+            origins_by_name(
+                result
+                    .external
+                    .edhrec_recommendations
+                    .iter()
+                    .map(|r| (r.card.name.as_str(), r.origins.as_slice()))
+            ),
+            vec![("Cultivate", vec![Origin::Edhrec])]
+        );
+    }
+
+    #[test]
+    fn offline_candidates_only_have_origin_kb() {
+        let (_dir, db) = fixture_db();
+        let cache_dir = tempfile::tempdir().unwrap();
+        let result = analyze_deck(
+            &deck_input(),
+            &db,
+            &Thresholds::default(),
+            true,
+            &PanicIfCalledEdhrecClient,
+            &PanicIfCalledRecommanderClient,
+            cache_dir.path(),
+        )
+        .unwrap();
+
+        assert!(!result.candidates.is_empty());
+        assert!(result.candidates.iter().all(|c| c.origins == [Origin::Kb]));
+    }
+
+    #[test]
+    fn a_json_without_origins_still_parses() {
+        let (_dir, db) = fixture_db();
+        let cache_dir = tempfile::tempdir().unwrap();
+        let result = analyze_deck(
+            &deck_input(),
+            &db,
+            &Thresholds::default(),
+            false,
+            &StubEdhrecClient(edhrec_json_with(&["Cultivate"])),
+            &StubRecommanderClient(recommander_json_with(&["Cultivate"])),
+            cache_dir.path(),
+        )
+        .unwrap();
+        let mut json = serde_json::to_value(&result).unwrap();
+        for list in [
+            "candidates",
+            "edhrec_recommendations",
+            "recommander_recommendations",
+        ] {
+            for item in json[list].as_array_mut().unwrap() {
+                item.as_object_mut().unwrap().remove("origins");
+            }
+        }
+
+        let parsed: AnalyzeResult = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.candidates.len(), result.candidates.len());
+        assert!(parsed.candidates.iter().all(|c| c.origins.is_empty()));
+        assert!(
+            parsed
+                .external
+                .recommander_recommendations
+                .iter()
+                .all(|r| r.origins.is_empty())
+        );
     }
 
     #[test]

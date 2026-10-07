@@ -48,6 +48,7 @@ pub fn find_candidates(
                 score,
                 matched_themes,
                 matched_weak_roles,
+                origins: vec![],
             })
         })
         .collect();
