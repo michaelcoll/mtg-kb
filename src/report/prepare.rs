@@ -295,6 +295,7 @@ mod tests {
                         synergy: 0.4,
                         inclusion_rate: 0.9,
                         header: "Top Cards".to_string(),
+                        theme: None,
                         origins: vec![],
                     }],
                     recommander_recommendations: vec![RecommanderRecommendation {

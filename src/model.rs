@@ -472,6 +472,10 @@ pub struct EdhrecRecommendation {
     pub inclusion_rate: f64,
     /// Liste EDHREC d'origine (ex. "High Synergy Cards").
     pub header: String,
+    /// Thème majeur de la page EDHREC d'origine ; absent pour la page
+    /// Commandant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
     #[serde(default)]
     pub origins: Vec<Origin>,
 }

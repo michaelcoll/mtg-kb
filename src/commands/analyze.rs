@@ -77,6 +77,7 @@ fn analyze_deck_in_bracket(
         result.external = external::fetch_all(
             db,
             &DeckContext::from_analysis(&result),
+            &analyze::major_themes(&result.cards, &result.commander),
             edhrec_client,
             recommander_client,
             edhrec_cache_dir,
@@ -782,6 +783,255 @@ mod tests {
                 .all(|c| c.card.name != "Mystical Tutor"),
             "un Rôle sans seuil ne produit pas de panier de Candidats"
         );
+    }
+}
+
+/// Pages EDHREC par Thème majeur (#97).
+#[cfg(test)]
+mod theme_pages_tests {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    use super::*;
+    use crate::db::fixture::{CardsFixture, FixtureCard};
+
+    /// Client EDHREC bouchonné : sert le JSON de chaque page connue,
+    /// échoue sur les autres, et enregistre les pages demandées.
+    #[derive(Default)]
+    struct PagesClient {
+        pages: HashMap<String, String>,
+        requested: RefCell<Vec<String>>,
+    }
+
+    impl PagesClient {
+        fn page(mut self, page: &str, names: &[&str]) -> Self {
+            self.pages.insert(page.to_string(), edhrec_json(names));
+            self
+        }
+
+        fn requested(&self) -> Vec<String> {
+            self.requested.borrow().clone()
+        }
+    }
+
+    impl EdhrecClient for PagesClient {
+        fn fetch(&self, page: &str) -> Result<String> {
+            self.requested.borrow_mut().push(page.to_string());
+            match self.pages.get(page) {
+                Some(json) => Ok(json.clone()),
+                None => anyhow::bail!("HTTP 404 ({page})"),
+            }
+        }
+    }
+
+    struct EmptyRecommander;
+    impl RecommanderClient for EmptyRecommander {
+        fn fetch(&self, _body: &serde_json::Value) -> Result<String> {
+            Ok(r#"{"data": {"recommendations": []}}"#.to_string())
+        }
+    }
+
+    fn edhrec_json(names: &[&str]) -> String {
+        let cardviews: Vec<_> = names
+            .iter()
+            .map(|n| serde_json::json!({"name": n, "synergy": 0.2, "num_decks": 1, "potential_decks": 2}))
+            .collect();
+        serde_json::json!({
+            "container": {"json_dict": {"cardlists": [
+                {"header": "Top Cards", "cardviews": cardviews}
+            ]}}
+        })
+        .to_string()
+    }
+
+    /// Krenko porte les Thèmes `tokens` et `tribal:Goblin` (dans la table) et
+    /// `tribal:Homunculus` (absent de la table), majeurs d'office.
+    fn fixture_db(extra: impl IntoIterator<Item = FixtureCard>) -> (tempfile::TempDir, CardsDb) {
+        CardsFixture::new()
+            .cards([
+                FixtureCard::new("krenko", "Krenko, Mob Boss")
+                    .types("Creature")
+                    .subtypes("Goblin, Homunculus")
+                    .supertypes("Legendary")
+                    .text("{T}: Create X 1/1 red Goblin creature tokens, where X is the number of Goblins you control.")
+                    .identity("R"),
+                FixtureCard::new("mountain", "Mountain")
+                    .types("Land")
+                    .subtypes("Mountain")
+                    .supertypes("Basic")
+                    .identity("R"),
+                FixtureCard::new("bolt", "Lightning Bolt")
+                    .types("Instant")
+                    .identity("R"),
+                FixtureCard::new("tremors", "Impact Tremors")
+                    .types("Enchantment")
+                    .identity("R"),
+                FixtureCard::new("instigator", "Goblin Instigator")
+                    .types("Creature")
+                    .identity("R"),
+            ])
+            .cards(extra)
+            .build()
+    }
+
+    const DECK: &str = "Commander\n1 Krenko, Mob Boss\n\nDeck\n99 Mountain\n";
+
+    fn analyze_online(db: &CardsDb, client: &PagesClient, cache_dir: &Path) -> AnalyzeResult {
+        analyze_deck(
+            DECK,
+            db,
+            &Thresholds::default(),
+            false,
+            client,
+            &EmptyRecommander,
+            cache_dir,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn each_major_theme_in_the_table_queries_its_page_and_others_none() {
+        let (_dir, db) = fixture_db([]);
+        let cache_dir = tempfile::tempdir().unwrap();
+        let client = PagesClient::default();
+
+        analyze_online(&db, &client, cache_dir.path());
+
+        assert_eq!(
+            client.requested(),
+            vec![
+                "krenko-mob-boss",
+                "krenko-mob-boss/tokens",
+                "krenko-mob-boss/goblins",
+            ]
+        );
+    }
+
+    fn edhrec_themes(result: &AnalyzeResult) -> Vec<(&str, Option<&str>)> {
+        result
+            .external
+            .edhrec_recommendations
+            .iter()
+            .map(|r| (r.card.name.as_str(), r.theme.as_deref()))
+            .collect()
+    }
+
+    #[test]
+    fn theme_page_recommendations_carry_their_theme_and_commander_page_ones_none() {
+        let (_dir, db) = fixture_db([]);
+        let cache_dir = tempfile::tempdir().unwrap();
+        let client = PagesClient::default()
+            .page("krenko-mob-boss", &["Lightning Bolt"])
+            .page("krenko-mob-boss/tokens", &["Impact Tremors"])
+            .page("krenko-mob-boss/goblins", &["Goblin Instigator"]);
+
+        let result = analyze_online(&db, &client, cache_dir.path());
+
+        assert_eq!(
+            edhrec_themes(&result),
+            vec![
+                ("Lightning Bolt", None),
+                ("Impact Tremors", Some("tokens")),
+                ("Goblin Instigator", Some("tribal:Goblin")),
+            ]
+        );
+        let json = serde_json::to_value(&result).unwrap();
+        let recommendations = json["edhrec_recommendations"].as_array().unwrap();
+        assert!(recommendations[0].get("theme").is_none());
+        assert_eq!(recommendations[1]["theme"], "tokens");
+    }
+
+    #[test]
+    fn the_cap_of_thirty_applies_per_page() {
+        let names =
+            |prefix: &str| -> Vec<String> { (0..35).map(|i| format!("{prefix} {i:02}")).collect() };
+        let (commander_names, tokens_names) = (names("Burn"), names("Token Maker"));
+        let (_dir, db) = fixture_db(
+            commander_names
+                .iter()
+                .chain(&tokens_names)
+                .map(|n| FixtureCard::new(n, n).types("Instant").identity("R")),
+        );
+        let cache_dir = tempfile::tempdir().unwrap();
+        fn as_strs(v: &[String]) -> Vec<&str> {
+            v.iter().map(String::as_str).collect()
+        }
+        let client = PagesClient::default()
+            .page("krenko-mob-boss", &as_strs(&commander_names))
+            .page("krenko-mob-boss/tokens", &as_strs(&tokens_names));
+
+        let result = analyze_online(&db, &client, cache_dir.path());
+
+        let themes = edhrec_themes(&result);
+        assert_eq!(themes.iter().filter(|(_, t)| t.is_none()).count(), 30);
+        assert_eq!(
+            themes.iter().filter(|(_, t)| *t == Some("tokens")).count(),
+            30
+        );
+    }
+
+    #[test]
+    fn a_failing_theme_page_is_a_source_error_naming_the_theme_and_keeps_other_pages() {
+        let (_dir, db) = fixture_db([]);
+        let cache_dir = tempfile::tempdir().unwrap();
+        let client = PagesClient::default()
+            .page("krenko-mob-boss", &["Lightning Bolt"])
+            .page("krenko-mob-boss/goblins", &["Goblin Instigator"]);
+
+        let result = analyze_online(&db, &client, cache_dir.path());
+
+        let sources: Vec<&str> = result
+            .external
+            .source_errors
+            .iter()
+            .map(|e| e.source.as_str())
+            .collect();
+        assert_eq!(sources, vec!["edhrec:tokens"]);
+        assert_eq!(
+            edhrec_themes(&result),
+            vec![
+                ("Lightning Bolt", None),
+                ("Goblin Instigator", Some("tribal:Goblin")),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_theme_page_is_served_from_the_cache_within_seven_days() {
+        let (_dir, db) = fixture_db([]);
+        let cache_dir = tempfile::tempdir().unwrap();
+        let first = PagesClient::default()
+            .page("krenko-mob-boss", &["Lightning Bolt"])
+            .page("krenko-mob-boss/tokens", &["Impact Tremors"])
+            .page("krenko-mob-boss/goblins", &["Goblin Instigator"]);
+        let first_result = analyze_online(&db, &first, cache_dir.path());
+
+        let unreachable = PagesClient::default();
+        let second_result = analyze_online(&db, &unreachable, cache_dir.path());
+
+        assert!(unreachable.requested().is_empty());
+        assert_eq!(edhrec_themes(&second_result), edhrec_themes(&first_result));
+    }
+
+    #[test]
+    fn offline_queries_no_theme_page() {
+        let (_dir, db) = fixture_db([]);
+        let cache_dir = tempfile::tempdir().unwrap();
+        let client = PagesClient::default();
+
+        let result = analyze_deck(
+            DECK,
+            &db,
+            &Thresholds::default(),
+            true,
+            &client,
+            &EmptyRecommander,
+            cache_dir.path(),
+        )
+        .unwrap();
+
+        assert!(client.requested().is_empty());
+        assert!(result.external.edhrec_recommendations.is_empty());
     }
 }
 

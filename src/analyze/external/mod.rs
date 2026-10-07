@@ -17,27 +17,46 @@ pub const MAX_RECOMMENDATIONS_PER_SOURCE: usize = 30;
 
 pub const EDHREC_CACHE_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
-/// Interroge EDHREC puis Recommander et fusionne leurs Recommandations
-/// externes filtrées. L'échec d'une Source est capturé dans `source_errors`
-/// sans bloquer l'autre.
-pub fn fetch_all(
+/// Interroge EDHREC (page Commandant, puis une page par Thème majeur de la
+/// table) puis Recommander, et fusionne leurs Recommandations externes
+/// filtrées. L'échec d'une page ou d'une Source est capturé dans
+/// `source_errors` (`edhrec`, `edhrec:<Thème>`, `recommander`) sans bloquer
+/// les autres.
+pub fn fetch_all<'a>(
     db: &CardsDb,
     deck: &DeckContext,
+    major_themes: impl IntoIterator<Item = &'a String>,
     edhrec_client: &dyn edhrec::EdhrecClient,
     recommander_client: &dyn recommander::RecommanderClient,
     edhrec_cache_dir: &Path,
 ) -> ExternalSources {
     let mut result = ExternalSources::default();
 
-    match edhrec::fetch_and_filter(edhrec_client, edhrec_cache_dir, EDHREC_CACHE_TTL, db, deck) {
-        Ok((recommendations, unresolved_names)) => {
-            result.edhrec_recommendations = recommendations;
-            result.edhrec_unresolved_names = unresolved_names;
+    for page in edhrec::pages(deck, major_themes) {
+        match edhrec::fetch_and_filter(
+            edhrec_client,
+            edhrec_cache_dir,
+            EDHREC_CACHE_TTL,
+            db,
+            deck,
+            &page,
+        ) {
+            Ok((recommendations, unresolved_names)) => {
+                result.edhrec_recommendations.extend(recommendations);
+                for name in unresolved_names {
+                    if !result.edhrec_unresolved_names.contains(&name) {
+                        result.edhrec_unresolved_names.push(name);
+                    }
+                }
+            }
+            Err(e) => result.source_errors.push(SourceError {
+                source: match &page.theme {
+                    Some(theme) => format!("edhrec:{theme}"),
+                    None => "edhrec".to_string(),
+                },
+                message: e.to_string(),
+            }),
         }
-        Err(e) => result.source_errors.push(SourceError {
-            source: "edhrec".to_string(),
-            message: e.to_string(),
-        }),
     }
 
     match recommander::fetch_and_filter(recommander_client, db, deck) {
@@ -219,6 +238,7 @@ mod tests {
         let result = fetch_all(
             &db,
             &green_deck(&[]),
+            [],
             &FailingEdhrecClient,
             &StubRecommanderClient(recommander_json),
             dir_for_test().path(),
@@ -248,6 +268,7 @@ mod tests {
         let result = fetch_all(
             &db,
             &green_deck(&[]),
+            [],
             &FailingEdhrecClient,
             &StubRecommanderClient(recommander_json),
             dir_for_test().path(),
@@ -267,6 +288,7 @@ mod tests {
         let result = fetch_all(
             &db,
             &green_deck(&[]),
+            [],
             &FailingEdhrecClient,
             &FailingRecommanderClient,
             dir_for_test().path(),
@@ -282,6 +304,7 @@ mod tests {
         let result = fetch_all(
             &db,
             &green_deck(&[]),
+            [],
             &StubEdhrecClient("not json".to_string()),
             &FailingRecommanderClient,
             dir_for_test().path(),

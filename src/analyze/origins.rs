@@ -117,6 +117,7 @@ mod tests {
                     synergy: 0.1,
                     inclusion_rate: 0.9,
                     header: "High Synergy Cards".to_string(),
+                    theme: None,
                     origins: vec![],
                 }],
                 recommander_recommendations: vec![RecommanderRecommendation {
@@ -166,6 +167,7 @@ mod tests {
                 synergy: 0.2,
                 inclusion_rate: 0.5,
                 header: "Top Cards".to_string(),
+                theme: None,
                 origins: vec![],
             });
         assert_eq!(
