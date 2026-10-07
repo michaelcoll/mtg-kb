@@ -136,6 +136,7 @@ pub fn run(input: &str, db: &CardsDb, thresholds: &metrics::Thresholds) -> Resul
         mana_curve,
         mana_base,
         role_counts,
+        thresholds: thresholds.clone(),
         weaknesses,
         synergies,
         candidates,

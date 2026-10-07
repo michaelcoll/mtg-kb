@@ -6,10 +6,12 @@ use crate::model::{
 };
 
 mod prepare;
+mod swap;
 mod validate;
 
 pub use crate::model::Origin;
 pub use prepare::{CardPrintings, PrintingLookup, ReportModel, ValidatedSuggestion, prepare};
+pub use swap::SwapWarning;
 
 pub fn slugify(name: &str) -> String {
     let mut slug = String::new();
@@ -108,6 +110,7 @@ fn render_head(commander_name: &str) -> String {
   .card-to-remove {{ display: flex; align-items: center; gap: 0.4rem; margin-top: 0.4rem; font-size: 0.85rem; }}
   .card-to-remove-art {{ flex: none; display: block; }}
   .card-to-remove-art img {{ display: block; width: 32px; border-radius: 4px; border: 1px solid var(--border); }}
+  .swap-warning {{ display: block; margin-top: 0.4rem; font-size: 0.85rem; color: var(--error); }}
   @media (max-width: 480px) {{
     .suggestion-art img {{ width: 44px; }}
     .card-to-remove-art img {{ width: 26px; }}
@@ -458,6 +461,20 @@ fn render_origin_badges(origins: &[Origin]) -> String {
         .collect()
 }
 
+fn render_swap_warnings(warnings: &[SwapWarning]) -> String {
+    warnings
+        .iter()
+        .map(|w| {
+            format!(
+                "<span class=\"swap-warning\">Échange : {} passe à {} (minimum {})</span>",
+                escape_html(&w.role),
+                w.count_after,
+                w.minimum
+            )
+        })
+        .collect()
+}
+
 fn render_suggestions_section(suggestions: &[ValidatedSuggestion]) -> String {
     let suggestion_items: String = suggestions
         .iter()
@@ -469,8 +486,9 @@ fn render_suggestions_section(suggestions: &[ValidatedSuggestion]) -> String {
                 s.card_to_remove.as_deref(),
                 s.card_to_remove_printing.as_ref(),
             );
+            let swap_warnings = render_swap_warnings(&s.swap_warnings);
             format!(
-                "<li class=\"suggestion-row\">{art}<span class=\"suggestion-body\"><strong>{name}</strong>{badges}<p>{}</p>{card_to_remove}</span></li>",
+                "<li class=\"suggestion-row\">{art}<span class=\"suggestion-body\"><strong>{name}</strong>{badges}<p>{}</p>{card_to_remove}{swap_warnings}</span></li>",
                 escape_html(&s.justification)
             )
         })
@@ -679,6 +697,7 @@ mod tests {
                     symbols_by_color: BTreeMap::new(),
                 },
                 role_counts: BTreeMap::new(),
+                thresholds: Default::default(),
                 weaknesses: vec!["Ramp sous-représenté : 3 cartes (< 10)".to_string()],
                 synergies: vec![Synergy {
                     theme: "tokens".to_string(),
@@ -720,6 +739,7 @@ mod tests {
                     printing: None,
                     card_to_remove_printing: None,
                     origins: vec![],
+                    swap_warnings: vec![],
                 })
                 .collect(),
             analysis: enriched.analysis,

@@ -5,7 +5,9 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+use super::swap::{SwapWarning, swap_warnings};
 use super::validate::validate_suggestions;
+use crate::analyze::metrics::detect_roles;
 use crate::analyze::origins::origins_of;
 use crate::db::cards::CardsDb;
 use crate::model::Origin;
@@ -41,6 +43,8 @@ pub struct ValidatedSuggestion {
     pub printing: Option<ReferencePrinting>,
     pub card_to_remove_printing: Option<ReferencePrinting>,
     pub origins: Vec<Origin>,
+    /// Rôles à seuil que l'échange affaiblit ; n'empêche pas le Rapport.
+    pub swap_warnings: Vec<SwapWarning>,
 }
 
 /// Entrée de `render` : Suggestions validées et Impressions de référence
@@ -132,11 +136,22 @@ pub fn prepare(
         .into_iter()
         .map(|s| {
             let printing = lookup.reference_printing(&s.card_name)?;
-            let card_to_remove_printing = match &s.card_to_remove {
-                Some(name) => lookup.reference_printing(name)?,
-                None => None,
+            let (card_to_remove_printing, swap_warnings) = match &s.card_to_remove {
+                Some(name) => {
+                    // Validée plus haut : la Suggestion est une Carte connue.
+                    let suggestion_roles = lookup
+                        .card(&s.card_name)?
+                        .map(|card| detect_roles(&card))
+                        .unwrap_or_default();
+                    (
+                        lookup.reference_printing(name)?,
+                        swap_warnings(&analysis, &suggestion_roles, name),
+                    )
+                }
+                None => (None, vec![]),
             };
             Ok(ValidatedSuggestion {
+                swap_warnings,
                 origins: origins_of(&analysis, &s.card_name),
                 card_name: s.card_name,
                 justification: s.justification,
@@ -260,6 +275,7 @@ mod tests {
                     symbols_by_color: BTreeMap::new(),
                 },
                 role_counts: BTreeMap::new(),
+                thresholds: Default::default(),
                 weaknesses: vec![],
                 synergies: vec![Synergy {
                     theme: "tokens".to_string(),
@@ -384,6 +400,134 @@ mod tests {
             }
             other => panic!("violations attendues, obtenu {other:?}"),
         }
+    }
+
+    fn with_roles(mut card: Card, roles: &[&str]) -> Card {
+        card.corrections.roles = Some(roles.iter().map(|r| r.to_string()).collect());
+        card
+    }
+
+    /// Deck avec exactement `min_ramp` (10) ramps, dont Llanowar Elves, et
+    /// une Carte sans Rôle (Krenko) ; Rampant Growth est un ramp hors Deck.
+    fn deck_at_ramp_threshold(suggestions: Vec<Suggestion>) -> (EnrichedAnalysis, MapLookup) {
+        let mut enriched = sample(suggestions);
+        enriched.analysis.cards = vec![
+            ResolvedCard {
+                quantity: 1,
+                roles: vec!["ramp".to_string()],
+                themes: vec![],
+                card: green("Llanowar Elves"),
+            },
+            ResolvedCard {
+                quantity: 1,
+                roles: vec![],
+                themes: vec![],
+                card: green("Krenko, Mob Boss"),
+            },
+        ];
+        enriched.analysis.role_counts = BTreeMap::from([
+            ("ramp".to_string(), 10),
+            ("pioche".to_string(), 8),
+            ("removal_cible".to_string(), 8),
+            ("wipe".to_string(), 2),
+            ("terrain".to_string(), 37),
+        ]);
+        let lookup = lookup().with(with_roles(green("Rampant Growth"), &["ramp"]));
+        (enriched, lookup)
+    }
+
+    fn swap_warnings_of(model: &ReportModel) -> Vec<(&str, Vec<SwapWarning>)> {
+        model
+            .suggestions
+            .iter()
+            .map(|s| (s.card_name.as_str(), s.swap_warnings.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn removing_the_only_ramp_above_threshold_warns_with_the_count_after_swap() {
+        let (enriched, lookup) =
+            deck_at_ramp_threshold(vec![suggestion("Beast Within", Some("Llanowar Elves"))]);
+        let model = prepare(enriched, &lookup).unwrap();
+
+        assert_eq!(
+            swap_warnings_of(&model),
+            vec![(
+                "Beast Within",
+                vec![SwapWarning {
+                    role: "ramp".to_string(),
+                    count_after: 9,
+                    minimum: 10,
+                }]
+            )]
+        );
+        let html = super::super::render(&model);
+        assert!(html.contains("ramp"));
+        assert!(html.contains("class=\"swap-warning\""));
+        assert!(html.contains("9"));
+    }
+
+    #[test]
+    fn a_swap_keeping_every_role_at_its_minimum_does_not_warn() {
+        let (enriched, lookup) = deck_at_ramp_threshold(vec![
+            // ramp contre ramp : 10 → 10.
+            suggestion("Rampant Growth", Some("Llanowar Elves")),
+            // aucune Carte à Rôle retirée.
+            suggestion("Beast Within", Some("Krenko, Mob Boss")),
+        ]);
+        let model = prepare(enriched, &lookup).unwrap();
+
+        assert_eq!(
+            swap_warnings_of(&model),
+            vec![("Rampant Growth", vec![]), ("Beast Within", vec![])]
+        );
+        assert!(!super::super::render(&model).contains("class=\"swap-warning\""));
+    }
+
+    #[test]
+    fn a_role_already_below_threshold_warns_only_if_it_drops_further() {
+        let (mut enriched, lookup) = deck_at_ramp_threshold(vec![
+            suggestion("Rampant Growth", Some("Krenko, Mob Boss")),
+            suggestion("Beast Within", Some("Krenko, Mob Boss")),
+            suggestion("Cultivate", Some("Llanowar Elves")),
+        ]);
+        enriched.analysis.role_counts.insert("ramp".to_string(), 5);
+        let model = prepare(enriched, &lookup).unwrap();
+
+        assert_eq!(
+            swap_warnings_of(&model),
+            vec![
+                ("Rampant Growth", vec![]),
+                ("Beast Within", vec![]),
+                (
+                    "Cultivate",
+                    vec![SwapWarning {
+                        role: "ramp".to_string(),
+                        count_after: 4,
+                        minimum: 10,
+                    }]
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_suggestion_without_card_to_remove_never_warns() {
+        let (mut enriched, lookup) = deck_at_ramp_threshold(vec![suggestion("Beast Within", None)]);
+        enriched.analysis.role_counts.clear();
+        let model = prepare(enriched, &lookup).unwrap();
+
+        assert_eq!(swap_warnings_of(&model), vec![("Beast Within", vec![])]);
+    }
+
+    #[test]
+    fn the_swap_is_judged_against_the_thresholds_recorded_in_the_analysis() {
+        let (mut enriched, lookup) =
+            deck_at_ramp_threshold(vec![suggestion("Beast Within", Some("Llanowar Elves"))]);
+        enriched.analysis.thresholds.min_ramp = 9;
+        let model = prepare(enriched, &lookup).unwrap();
+
+        assert_eq!(swap_warnings_of(&model), vec![("Beast Within", vec![])]);
     }
 
     #[test]

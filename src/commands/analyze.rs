@@ -155,6 +155,7 @@ mod tests {
                 "mana_curve",
                 "mana_base",
                 "role_counts",
+                "thresholds",
                 "weaknesses",
                 "synergies",
                 "candidates",
@@ -216,6 +217,22 @@ mod tests {
         }
         let parsed: AnalyzeResult = serde_json::from_value(json).unwrap();
         assert_eq!(parsed, result);
+    }
+
+    #[test]
+    fn a_json_without_thresholds_reads_back_the_default_thresholds() {
+        let (_dir, db) = fixture_db();
+        let custom = Thresholds {
+            min_ramp: 3,
+            ..Thresholds::default()
+        };
+        let result = analyze::run(&deck_input(), &db, &custom).unwrap();
+        let mut json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["thresholds"]["min_ramp"], 3);
+        json.as_object_mut().unwrap().remove("thresholds");
+
+        let parsed: AnalyzeResult = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.thresholds, Thresholds::default());
     }
 
     struct StubEdhrecClient(String);
