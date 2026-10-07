@@ -36,8 +36,9 @@ which deduplicate Printings by oracle name and return stable JSON.
     `grave_hate` (graveyard exile), `terrain` (land)), repeatable, combined
     with AND
   - `--theme <theme>`: detected Theme (same detection as `kb analyze`:
-    `tokens`, `+1/+1`, `aristocrats`, `tribal:<subtype>`), repeatable,
-    combined with AND
+    `tokens`, `+1/+1`, `aristocrats`, `artefacts`, `enchantements`,
+    `spellslinger`, `cimetiere`, `landfall`, `lifegain`, `blink`, `voltron`,
+    `tribal:<subtype>`), repeatable, combined with AND
   - `--exclude-deck <file|->`: excludes the Cards in this Decklist
     (Commander and Deck), same parsing as `kb analyze`
 - `kb set <code>` — Set information by code (`LEA`, `M19`, …)
