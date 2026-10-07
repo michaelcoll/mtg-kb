@@ -136,6 +136,11 @@ pub struct Card {
     pub legal_in_commander: bool,
     pub front: Face,
     pub back: Option<Face>,
+    /// Signaux de qualité (ADR 0006) : rang de popularité EDHREC (1 = la plus
+    /// jouée), salt EDHREC, statut Game Changer.
+    pub edhrec_rank: Option<u32>,
+    pub salt: Option<f64>,
+    pub game_changer: bool,
     /// Posées par `CardsDb` ; `legal_in_commander` en tient déjà compte.
     pub corrections: CardCorrections,
 }
@@ -217,6 +222,13 @@ struct CardJson {
     layout: Layout,
     #[serde(default)]
     legal_in_commander: bool,
+    /// Absents d'un JSON antérieur aux signaux de qualité : relus vides.
+    #[serde(default)]
+    edhrec_rank: Option<u32>,
+    #[serde(default)]
+    salt: Option<f64>,
+    #[serde(default)]
+    game_changer: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     faces: Vec<Face>,
     /// Informatif : ignoré à la relecture.
@@ -248,6 +260,9 @@ impl From<Card> for CardJson {
             loyalty: front.loyalty,
             layout: card.layout,
             legal_in_commander: card.legal_in_commander,
+            edhrec_rank: card.edhrec_rank,
+            salt: card.salt,
+            game_changer: card.game_changer,
             faces,
             overridden: card.corrections.overridden(),
         }
@@ -286,6 +301,9 @@ impl From<CardJson> for Card {
             legal_in_commander: json.legal_in_commander,
             front,
             back,
+            edhrec_rank: json.edhrec_rank,
+            salt: json.salt,
+            game_changer: json.game_changer,
             corrections: CardCorrections::default(),
         }
     }

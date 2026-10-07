@@ -13,7 +13,8 @@ const SCHEMA: &str = r#"
         subtypes TEXT, supertypes TEXT, text TEXT, colorIdentity TEXT, colors TEXT,
         keywords TEXT, power TEXT, toughness TEXT, loyalty TEXT,
         setCode TEXT, number TEXT, availability TEXT DEFAULT 'paper',
-        isPromo BOOLEAN DEFAULT 0, isOversized BOOLEAN DEFAULT 0, isFunny BOOLEAN DEFAULT 0
+        isPromo BOOLEAN DEFAULT 0, isOversized BOOLEAN DEFAULT 0, isFunny BOOLEAN DEFAULT 0,
+        edhrecRank INTEGER, edhrecSaltiness REAL, isGameChanger BOOLEAN
     );
     CREATE TABLE cardLegalities (uuid TEXT, commander TEXT, standard TEXT);
     CREATE TABLE cardRulings (uuid TEXT, date TEXT, text TEXT);
@@ -46,6 +47,10 @@ pub struct FixtureCard {
     number: Option<String>,
     is_promo: bool,
     is_oversized: bool,
+    edhrec_rank: Option<u32>,
+    salt: Option<f64>,
+    /// `None` : NULL, comme MTGJSON pour une Carte qui n'est pas Game Changer.
+    is_game_changer: Option<bool>,
     commander: Option<String>,
     standard: Option<String>,
 }
@@ -73,6 +78,9 @@ impl FixtureCard {
             number: None,
             is_promo: false,
             is_oversized: false,
+            edhrec_rank: None,
+            salt: None,
+            is_game_changer: None,
             commander: Some("Legal".to_string()),
             standard: None,
         }
@@ -150,6 +158,21 @@ impl FixtureCard {
         self
     }
 
+    pub fn edhrec_rank(mut self, rank: u32) -> Self {
+        self.edhrec_rank = Some(rank);
+        self
+    }
+
+    pub fn salt(mut self, salt: f64) -> Self {
+        self.salt = Some(salt);
+        self
+    }
+
+    pub fn game_changer(mut self) -> Self {
+        self.is_game_changer = Some(true);
+        self
+    }
+
     /// `cardLegalities.commander` à NULL, comme certaines promos.
     pub fn without_commander_legality(mut self) -> Self {
         self.commander = None;
@@ -185,9 +208,10 @@ impl CardsFixture {
             .execute(
                 "INSERT INTO cards (uuid, name, faceName, side, layout, manaCost, manaValue, \
                  faceManaValue, type, types, subtypes, supertypes, text, colorIdentity, \
-                 keywords, setCode, number, isPromo, isOversized) \
+                 keywords, setCode, number, isPromo, isOversized, edhrecRank, edhrecSaltiness, \
+                 isGameChanger) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, \
-                 ?17, ?18, ?19)",
+                 ?17, ?18, ?19, ?20, ?21, ?22)",
                 params![
                     card.uuid,
                     card.name,
@@ -208,6 +232,9 @@ impl CardsFixture {
                     card.number,
                     card.is_promo,
                     card.is_oversized,
+                    card.edhrec_rank,
+                    card.salt,
+                    card.is_game_changer,
                 ],
             )
             .unwrap();

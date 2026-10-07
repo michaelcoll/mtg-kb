@@ -255,6 +255,137 @@ mod tests {
         assert!(result.external.source_errors.is_empty());
     }
 
+    fn signals_fixture_db() -> (tempfile::TempDir, CardsDb) {
+        let bala_ged = |side: &str, face: &str, types: &str| {
+            FixtureCard::new(
+                &format!("bala-ged-{side}"),
+                "Bala Ged Recovery // Bala Ged Sanctuary",
+            )
+            .face("modal_dfc", side, face, 3.0)
+            .mana_value(3.0)
+            .types(types)
+            .identity("G")
+            .edhrec_rank(812)
+            .salt(0.4)
+        };
+        CardsFixture::new()
+            .cards([
+                FixtureCard::new("atraxa", "Atraxa, Praetors' Voice")
+                    .types("Creature")
+                    .supertypes("Legendary")
+                    .identity("B, G, U, W")
+                    .edhrec_rank(40)
+                    .salt(1.9),
+                FixtureCard::new("forest", "Forest")
+                    .types("Land")
+                    .supertypes("Basic"),
+                FixtureCard::new("rampant", "Rampant Growth")
+                    .mana("{1}{G}", 2.0)
+                    .types("Sorcery")
+                    .text("Search your library for a basic land card, put it onto the battlefield tapped, then shuffle.")
+                    .identity("G")
+                    .edhrec_rank(150)
+                    .salt(0.2)
+                    .game_changer(),
+                bala_ged("a", "Bala Ged Recovery", "Sorcery"),
+                bala_ged("b", "Bala Ged Sanctuary", "Land"),
+            ])
+            .build()
+    }
+
+    fn signals(card: &serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "edhrec_rank": card["edhrec_rank"],
+            "salt": card["salt"],
+            "game_changer": card["game_changer"],
+        })
+    }
+
+    #[test]
+    fn every_card_in_the_json_carries_its_quality_signals() {
+        let (_dir, db) = signals_fixture_db();
+        let cache_dir = tempfile::tempdir().unwrap();
+        let edhrec_json = serde_json::json!({
+            "container": {"json_dict": {"cardlists": [
+                {"header": "Top Cards", "cardviews": [
+                    {"name": "Rampant Growth", "synergy": 0.2, "num_decks": 1, "potential_decks": 2}
+                ]}
+            ]}}
+        })
+        .to_string();
+        let input =
+            "Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n1 Bala Ged Recovery\n98 Forest\n";
+
+        let result = analyze_deck(
+            input,
+            &db,
+            &Thresholds::default(),
+            false,
+            &StubEdhrecClient(edhrec_json),
+            &StubRecommanderClient(r#"{"data": {"recommendations": []}}"#.to_string()),
+            cache_dir.path(),
+        )
+        .unwrap();
+        let json = serde_json::to_value(&result).unwrap();
+
+        assert_eq!(
+            signals(&json["commander"]),
+            serde_json::json!({"edhrec_rank": 40, "salt": 1.9, "game_changer": false})
+        );
+        let deck_card = |name: &str| {
+            json["cards"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|c| c["card"]["name"] == name)
+                .unwrap()["card"]
+                .clone()
+        };
+        assert_eq!(
+            signals(&deck_card("Bala Ged Recovery // Bala Ged Sanctuary")),
+            serde_json::json!({"edhrec_rank": 812, "salt": 0.4, "game_changer": false})
+        );
+        assert_eq!(
+            signals(&deck_card("Forest")),
+            serde_json::json!({"edhrec_rank": null, "salt": null, "game_changer": false}),
+            "une valeur absente est explicitement nulle"
+        );
+        let deck_card_json = deck_card("Forest");
+        assert!(deck_card_json.get("edhrec_rank").is_some());
+        assert!(deck_card_json.get("salt").is_some());
+
+        let rampant = serde_json::json!({"edhrec_rank": 150, "salt": 0.2, "game_changer": true});
+        let candidate = json["candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["card"]["name"] == "Rampant Growth")
+            .expect("Rampant Growth est Candidat (ramp sous-représenté)");
+        assert_eq!(signals(&candidate["card"]), rampant);
+        assert_eq!(signals(&json["edhrec_recommendations"][0]["card"]), rampant);
+    }
+
+    #[test]
+    fn a_card_json_without_quality_signals_still_parses() {
+        let (_dir, db) = signals_fixture_db();
+        let result = analyze::run(
+            "Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n99 Forest\n",
+            &db,
+            &Thresholds::default(),
+        )
+        .unwrap();
+        let mut json = serde_json::to_value(&result).unwrap();
+        let commander = json["commander"].as_object_mut().unwrap();
+        for key in ["edhrec_rank", "salt", "game_changer"] {
+            commander.remove(key);
+        }
+
+        let parsed: AnalyzeResult = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.commander.edhrec_rank, None);
+        assert_eq!(parsed.commander.salt, None);
+        assert!(!parsed.commander.game_changer);
+    }
+
     #[test]
     fn edhrec_ties_on_synergy_are_broken_by_inclusion_rate_then_name() {
         let (_dir, db) = CardsFixture::new()

@@ -63,7 +63,8 @@ fn card_columns() -> String {
     format!(
         "c.name, c.side, c.layout, c.faceName, c.manaCost, c.manaValue, c.faceManaValue, \
          c.type, c.types, c.subtypes, c.supertypes, c.text, c.colorIdentity, c.colors, \
-         c.keywords, c.power, c.toughness, c.loyalty, {} AS legal",
+         c.keywords, c.power, c.toughness, c.loyalty, {} AS legal, \
+         c.edhrecRank, c.edhrecSaltiness, c.isGameChanger",
         printing_legal_in("commander")
     )
 }
@@ -75,6 +76,9 @@ struct CardRow {
     mana_value: Option<f64>,
     color_identity: Vec<String>,
     legal_in_commander: bool,
+    edhrec_rank: Option<u32>,
+    salt: Option<f64>,
+    game_changer: bool,
     face: Face,
 }
 
@@ -92,6 +96,9 @@ fn card_row(row: &Row) -> rusqlite::Result<CardRow> {
         mana_value,
         color_identity: csv(12)?,
         legal_in_commander: row.get(18)?,
+        edhrec_rank: row.get(19)?,
+        salt: row.get(20)?,
+        game_changer: row.get::<_, Option<bool>>(21)?.unwrap_or(false),
         face: Face {
             name: face_name.unwrap_or_else(|| name.clone()),
             mana_cost: row.get(4)?,
@@ -119,6 +126,10 @@ fn rows_to_cards(rows: impl IntoIterator<Item = CardRow>) -> Vec<Card> {
         match cards.last_mut() {
             Some(card) if card.name == row.name => {
                 card.legal_in_commander |= row.legal_in_commander;
+                // Signaux propres à la Carte : la première ligne qui les porte.
+                card.edhrec_rank = card.edhrec_rank.or(row.edhrec_rank);
+                card.salt = card.salt.or(row.salt);
+                card.game_changer |= row.game_changer;
                 if card.back.is_none()
                     && card.layout.is_multi_face()
                     && row.side.as_deref() == Some("b")
@@ -134,6 +145,9 @@ fn rows_to_cards(rows: impl IntoIterator<Item = CardRow>) -> Vec<Card> {
                 legal_in_commander: row.legal_in_commander,
                 front: row.face,
                 back: None,
+                edhrec_rank: row.edhrec_rank,
+                salt: row.salt,
+                game_changer: row.game_changer,
                 corrections: CardCorrections::default(),
             }),
         }
