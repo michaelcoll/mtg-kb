@@ -465,6 +465,9 @@ pub struct AnalyzeResult {
     pub mana_curve: ManaCurve,
     pub mana_base: ManaBase,
     pub role_counts: BTreeMap<String, u32>,
+    /// Seuils de l'analyse ; défauts pour un JSON qui ne les porte pas.
+    #[serde(default)]
+    pub thresholds: crate::analyze::metrics::Thresholds,
     pub weaknesses: Vec<String>,
     pub synergies: Vec<Synergy>,
     pub candidates: Vec<Candidate>,

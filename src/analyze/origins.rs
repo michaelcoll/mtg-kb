@@ -100,6 +100,7 @@ mod tests {
                 symbols_by_color: BTreeMap::new(),
             },
             role_counts: BTreeMap::new(),
+            thresholds: Default::default(),
             weaknesses: vec![],
             synergies: vec![],
             candidates: vec![Candidate {

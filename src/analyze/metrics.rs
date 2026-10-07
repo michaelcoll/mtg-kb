@@ -240,8 +240,11 @@ pub fn mana_base(cards: &[ResolvedCard], commander: &Card) -> ManaBase {
 }
 
 /// Seuils de `kb analyze`, exposés tels quels en options de la CLI : les
-/// défauts ne sont écrits qu'ici, dans `Thresholds::DEFAULT`.
-#[derive(Debug, Clone, PartialEq, clap::Args)]
+/// défauts ne sont écrits qu'ici, dans `Thresholds::DEFAULT`. Inscrits dans
+/// le JSON pour que `kb report` juge les échanges sur les mêmes seuils ; un
+/// seuil absent (JSON ancien) reprend son défaut.
+#[derive(Debug, Clone, PartialEq, clap::Args, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct Thresholds {
     /// Nombre minimal de terrains attendu
     #[arg(long, default_value_t = Thresholds::DEFAULT.min_lands)]
@@ -283,6 +286,19 @@ impl Thresholds {
 impl Default for Thresholds {
     fn default() -> Self {
         Self::DEFAULT
+    }
+}
+
+impl Thresholds {
+    /// Minimum de chaque Rôle à seuil, `terrain` compris.
+    pub fn role_minimums(&self) -> [(&'static str, u32); 5] {
+        [
+            (TERRAIN, self.min_lands),
+            (RAMP, self.min_ramp),
+            (PIOCHE, self.min_draw),
+            (REMOVAL_CIBLE, self.min_removal),
+            (WIPE, self.min_wipe),
+        ]
     }
 }
 
