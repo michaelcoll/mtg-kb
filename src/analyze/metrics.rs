@@ -39,9 +39,27 @@ fn detect_face_roles(face: &Face) -> Vec<String> {
         )
         .unwrap()
     });
-    static PROTECTION: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)(hexproof|indestructible|protection from|counter target spell)").unwrap()
+    static PROTECTION: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)(hexproof|indestructible|protection from)").unwrap());
+    // Ce qui est cherché, jusqu'au mot "card" ; une recherche de terrain est du ramp.
+    static LIBRARY_SEARCH: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)search your library (?:and/or graveyard )?for ([^.]*?)\bcards?\b").unwrap()
     });
+    static LAND_WORD: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)\b(lands?|plains|islands?|swamps?|mountains?|forests?)\b").unwrap()
+    });
+    static RECURSION: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)(return|put) [^.]*?\bfrom (your|a) graveyard (to|onto)\b").unwrap()
+    });
+    // Exil depuis le cimetière d'un autre ou de tous ; pas l'exil de son propre cimetière.
+    static GRAVE_HATE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r"(?i)exile [^.]*?\b(a|all|target player's|target opponent's|each opponent's|each player's|that player's) graveyards?\b",
+        )
+        .unwrap()
+    });
+    static COUNTERSPELL: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)counter target [^.]*?\b(spell|ability)").unwrap());
     // Haine de cimetière : cible une carte/le cimetière, pas un removal de permanent.
     static GRAVEYARD_TARGET: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?i)(target[\w ']*graveyard|all graveyards)").unwrap());
@@ -78,6 +96,21 @@ fn detect_face_roles(face: &Face) -> Vec<String> {
             .any(|k| k == "Hexproof" || k == "Indestructible")
     {
         roles.push("protection".to_string());
+    }
+    if LIBRARY_SEARCH
+        .captures_iter(text)
+        .any(|caps| !LAND_WORD.is_match(&caps[1]))
+    {
+        roles.push("tutor".to_string());
+    }
+    if RECURSION.is_match(text) {
+        roles.push("recursion".to_string());
+    }
+    if GRAVE_HATE.is_match(text) {
+        roles.push("grave_hate".to_string());
+    }
+    if COUNTERSPELL.is_match(text) {
+        roles.push("contresort".to_string());
     }
     roles
 }
@@ -449,6 +482,191 @@ mod tests {
     }
 
     #[test]
+    fn a_counterspell_is_contresort_and_not_protection() {
+        let counterspell = card(
+            "Counterspell",
+            "Counter target spell.",
+            &["Instant"],
+            Some("{U}{U}"),
+        );
+        assert_eq!(detect_roles(&counterspell), vec!["contresort".to_string()]);
+
+        let swan_song = card(
+            "Swan Song",
+            "Counter target enchantment, instant, or sorcery spell. Its controller creates a 2/2 blue Bird creature token with flying.",
+            &["Instant"],
+            Some("{U}"),
+        );
+        assert_eq!(detect_roles(&swan_song), vec!["contresort".to_string()]);
+
+        let stifle = card(
+            "Stifle",
+            "Counter target activated or triggered ability. (Mana abilities can't be targeted.)",
+            &["Instant"],
+            Some("{U}"),
+        );
+        assert_eq!(detect_roles(&stifle), vec!["contresort".to_string()]);
+    }
+
+    #[test]
+    fn a_nonland_library_search_is_a_tutor() {
+        let demonic_tutor = card(
+            "Demonic Tutor",
+            "Search your library for a card, put that card into your hand, then shuffle.",
+            &["Sorcery"],
+            Some("{1}{B}"),
+        );
+        assert_eq!(detect_roles(&demonic_tutor), vec!["tutor".to_string()]);
+
+        let worldly_tutor = card(
+            "Worldly Tutor",
+            "Search your library for a creature card, reveal it, then shuffle and put the card on top.",
+            &["Instant"],
+            Some("{G}"),
+        );
+        assert_eq!(detect_roles(&worldly_tutor), vec!["tutor".to_string()]);
+
+        let enlightened_tutor = card(
+            "Enlightened Tutor",
+            "Search your library for an artifact or enchantment card, reveal it, then shuffle and put that card on top.",
+            &["Instant"],
+            Some("{W}"),
+        );
+        assert_eq!(detect_roles(&enlightened_tutor), vec!["tutor".to_string()]);
+    }
+
+    #[test]
+    fn a_land_search_is_not_a_tutor() {
+        let cultivate = card(
+            "Cultivate",
+            "Search your library for up to two basic land cards, reveal them, put one onto the battlefield tapped and the other into your hand, then shuffle.",
+            &["Sorcery"],
+            Some("{2}{G}"),
+        );
+        assert!(!detect_roles(&cultivate).contains(&"tutor".to_string()));
+
+        let farseek = card(
+            "Farseek",
+            "Search your library for an Island, Swamp, Mountain, or Plains card and put it onto the battlefield tapped. Then shuffle.",
+            &["Sorcery"],
+            Some("{1}{G}"),
+        );
+        assert!(!detect_roles(&farseek).contains(&"tutor".to_string()));
+
+        let evolving_wilds = card(
+            "Evolving Wilds",
+            "{T}, Sacrifice Evolving Wilds: Search your library for a basic land card, put it onto the battlefield tapped, then shuffle.",
+            &["Land"],
+            None,
+        );
+        assert!(!detect_roles(&evolving_wilds).contains(&"tutor".to_string()));
+    }
+
+    #[test]
+    fn returning_a_card_from_the_graveyard_is_recursion() {
+        let regrowth = card(
+            "Regrowth",
+            "Return target card from your graveyard to your hand.",
+            &["Sorcery"],
+            Some("{1}{G}"),
+        );
+        assert_eq!(detect_roles(&regrowth), vec!["recursion".to_string()]);
+
+        let reanimate = card(
+            "Reanimate",
+            "Put target creature card from a graveyard onto the battlefield under your control. You lose life equal to its mana value.",
+            &["Sorcery"],
+            Some("{B}"),
+        );
+        assert_eq!(detect_roles(&reanimate), vec!["recursion".to_string()]);
+
+        let eternal_witness = card(
+            "Eternal Witness",
+            "When this creature enters, you may return target card from your graveyard to your hand.",
+            &["Creature"],
+            Some("{1}{G}{G}"),
+        );
+        assert_eq!(
+            detect_roles(&eternal_witness),
+            vec!["recursion".to_string()]
+        );
+    }
+
+    #[test]
+    fn exiling_from_a_graveyard_is_not_recursion() {
+        let bojuka_bog = card(
+            "Bojuka Bog",
+            "Bojuka Bog enters tapped.\nWhen Bojuka Bog enters, exile target player's graveyard.\n{T}: Add {B}.",
+            &["Land"],
+            None,
+        );
+        assert!(!detect_roles(&bojuka_bog).contains(&"recursion".to_string()));
+
+        let crook_of_condemnation = card(
+            "Crook of Condemnation",
+            "{T}: Exile target card from a graveyard. If it was a creature card, you gain 1 life. {2}, {T}, Sacrifice Crook of Condemnation: Exile all graveyards.",
+            &["Artifact"],
+            Some("{2}"),
+        );
+        assert!(!detect_roles(&crook_of_condemnation).contains(&"recursion".to_string()));
+    }
+
+    #[test]
+    fn exiling_cards_from_graveyards_is_grave_hate() {
+        let rest_in_peace = card(
+            "Rest in Peace",
+            "When Rest in Peace enters, exile all graveyards.\nIf a card or token would be put into a graveyard from anywhere, exile it instead.",
+            &["Enchantment"],
+            Some("{1}{W}"),
+        );
+        assert_eq!(detect_roles(&rest_in_peace), vec!["grave_hate".to_string()]);
+
+        let crook_of_condemnation = card(
+            "Crook of Condemnation",
+            "{T}: Exile target card from a graveyard. If it was a creature card, you gain 1 life. {2}, {T}, Sacrifice Crook of Condemnation: Exile all graveyards.",
+            &["Artifact"],
+            Some("{2}"),
+        );
+        assert_eq!(
+            detect_roles(&crook_of_condemnation),
+            vec!["grave_hate".to_string()]
+        );
+
+        let bojuka_bog = card(
+            "Bojuka Bog",
+            "Bojuka Bog enters tapped.\nWhen Bojuka Bog enters, exile target player's graveyard.\n{T}: Add {B}.",
+            &["Land"],
+            None,
+        );
+        assert!(detect_roles(&bojuka_bog).contains(&"grave_hate".to_string()));
+    }
+
+    #[test]
+    fn exiling_from_your_own_graveyard_as_a_cost_is_not_grave_hate() {
+        let drudge_spell = card(
+            "Drudge Spell",
+            "Exile two creature cards from your graveyard: Create a 1/1 black Skeleton creature token.",
+            &["Enchantment"],
+            Some("{B}{B}"),
+        );
+        assert!(!detect_roles(&drudge_spell).contains(&"grave_hate".to_string()));
+    }
+
+    #[test]
+    fn protection_still_covers_hexproof_and_indestructible() {
+        let heroic_intervention = card(
+            "Heroic Intervention",
+            "Permanents you control gain hexproof and indestructible until end of turn.",
+            &["Instant"],
+            Some("{1}{G}"),
+        );
+        assert_eq!(
+            detect_roles(&heroic_intervention),
+            vec!["protection".to_string()]
+        );
+    }
+
+    #[test]
     fn detects_ramp_from_commander_color_identity_any_color() {
         let arcane_signet = card(
             "Arcane Signet",
@@ -751,6 +969,26 @@ mod tests {
         assert!(detect_roles(&drudge_spell).is_empty());
         drudge_spell.corrections.roles = Some(vec!["grave_hate".to_string()]);
         assert_eq!(detect_roles(&drudge_spell), vec!["grave_hate".to_string()]);
+    }
+
+    #[test]
+    fn a_role_correction_also_replaces_the_new_roles() {
+        let mut mystic_sanctuary = card(
+            "Mystic Sanctuary",
+            "When this land enters untapped, you may put target instant or sorcery card from your graveyard on top of your library.",
+            &["Land"],
+            None,
+        );
+        mystic_sanctuary.corrections.roles =
+            Some(vec!["terrain".to_string(), "recursion".to_string()]);
+        assert_eq!(
+            detect_roles(&mystic_sanctuary),
+            vec!["terrain".to_string(), "recursion".to_string()]
+        );
+
+        let mut counterspell = card("Counterspell", "Counter target spell.", &["Instant"], None);
+        counterspell.corrections.roles = Some(vec!["protection".to_string()]);
+        assert_eq!(detect_roles(&counterspell), vec!["protection".to_string()]);
     }
 
     #[test]

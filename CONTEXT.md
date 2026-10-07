@@ -70,7 +70,7 @@ Une ligne de Decklist dont le nom ne correspond exactement à aucune Carte.
 ## Analyse
 
 **Rôle**:
-La fonction d'une Carte dans un Deck (ramp, pioche, removal ciblé, wipe, protection, terrain…) ; une Carte a zéro ou plusieurs Rôles.
+La fonction d'une Carte dans un Deck (ramp, pioche, removal ciblé, wipe, protection, contresort, tutor, recursion, grave hate, terrain…) ; une Carte a zéro ou plusieurs Rôles. Tutor, recursion, contresort et grave hate n'ont pas de seuil : ils ne font jamais un Point faible.
 _Avoid_: Tag, catégorie
 
 **Thème**:

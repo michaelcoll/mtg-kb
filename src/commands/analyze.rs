@@ -655,6 +655,85 @@ mod tests {
         assert!(result.external.edhrec_recommendations.is_empty());
         assert!(result.external.recommander_recommendations.is_empty());
     }
+
+    /// Les Rôles tutor, recursion, contresort et grave_hate sont comptés et
+    /// exposés par Carte, sans seuil : ni Point faible, ni panier de Candidats.
+    #[test]
+    fn roles_without_threshold_are_counted_but_never_a_weakness() {
+        let (_dir, db) = CardsFixture::new()
+            .cards([
+                FixtureCard::new("atraxa", "Atraxa, Praetors' Voice")
+                    .types("Creature")
+                    .supertypes("Legendary")
+                    .identity("B, G, U, W"),
+                FixtureCard::new("forest", "Forest")
+                    .types("Land")
+                    .supertypes("Basic"),
+                FixtureCard::new("demonic", "Demonic Tutor")
+                    .mana("{1}{B}", 2.0)
+                    .types("Sorcery")
+                    .identity("B")
+                    .text("Search your library for a card, put that card into your hand, then shuffle."),
+                FixtureCard::new("regrowth", "Regrowth")
+                    .mana("{1}{G}", 2.0)
+                    .types("Sorcery")
+                    .identity("G")
+                    .text("Return target card from your graveyard to your hand."),
+                FixtureCard::new("counterspell", "Counterspell")
+                    .mana("{U}{U}", 2.0)
+                    .types("Instant")
+                    .identity("U")
+                    .text("Counter target spell."),
+                FixtureCard::new("rip", "Rest in Peace")
+                    .mana("{1}{W}", 2.0)
+                    .types("Enchantment")
+                    .identity("W")
+                    .text("When Rest in Peace enters, exile all graveyards."),
+                FixtureCard::new("mystical", "Mystical Tutor")
+                    .mana("{U}", 1.0)
+                    .types("Instant")
+                    .identity("U")
+                    .text("Search your library for an instant or sorcery card, reveal it, then shuffle and put that card on top."),
+            ])
+            .build();
+        let cache_dir = tempfile::tempdir().unwrap();
+        let input = "Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n\
+                     1 Demonic Tutor\n1 Regrowth\n1 Counterspell\n1 Rest in Peace\n95 Forest\n";
+        let result = analyze_deck(
+            input,
+            &db,
+            &Thresholds::default(),
+            true,
+            &PanicIfCalledEdhrecClient,
+            &PanicIfCalledRecommanderClient,
+            cache_dir.path(),
+        )
+        .unwrap();
+
+        for role in ["tutor", "recursion", "contresort", "grave_hate"] {
+            assert_eq!(result.role_counts.get(role), Some(&1), "{role}");
+        }
+        assert_eq!(result.role_counts.get("protection"), None);
+        let counterspell = result
+            .cards
+            .iter()
+            .find(|c| c.card.name == "Counterspell")
+            .unwrap();
+        assert_eq!(counterspell.roles, vec!["contresort".to_string()]);
+        for weakness in &result.weaknesses {
+            let weakness = weakness.to_lowercase();
+            for role in ["tutor", "recursion", "contresort", "grave"] {
+                assert!(!weakness.contains(role), "{weakness}");
+            }
+        }
+        assert!(
+            result
+                .candidates
+                .iter()
+                .all(|c| c.card.name != "Mystical Tutor"),
+            "un Rôle sans seuil ne produit pas de panier de Candidats"
+        );
+    }
 }
 
 /// Terrains Candidats quand la base de mana est insuffisante (#90).
