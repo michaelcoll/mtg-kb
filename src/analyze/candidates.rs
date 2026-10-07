@@ -6,7 +6,7 @@ use crate::db::cards::CardsDb;
 use crate::deck_context::DeckContext;
 use crate::model::Candidate;
 
-use super::ranking::sort_desc_by_score_then_name;
+use super::ranking::{TieBreak, sort_candidates};
 use super::themes;
 
 const CANDIDATE_LIMIT_PER_BUCKET: usize = 10;
@@ -14,12 +14,14 @@ const CANDIDATE_LIMIT_PER_BUCKET: usize = 10;
 /// Cartes éligibles (`DeckContext`) réparties en Candidats : jusqu'à
 /// `CANDIDATE_LIMIT_PER_BUCKET` par Rôle sous-représenté et par Thème majeur,
 /// dédupliqués par nom. Les terrains de base ne sont jamais Candidats. Un Candidat porte tous les Rôles/Thèmes du Deck qu'il
-/// matche. Les Cartes qui n'en matchent aucun sont écartées.
+/// matche. Les Cartes qui n'en matchent aucun sont écartées. À score égal,
+/// `tie_break` départage, à la sélection par panier comme au tri final.
 pub fn find_candidates(
     db: &CardsDb,
     deck: &DeckContext,
     major_themes: &HashSet<String>,
     weak_roles: &[String],
+    tie_break: TieBreak,
 ) -> Result<Vec<Candidate>> {
     let pool = db.commander_pool(deck.commander_identity())?;
 
@@ -60,29 +62,37 @@ pub fn find_candidates(
     let mut picked: HashSet<String> = HashSet::new();
 
     for role in weak_roles {
-        for candidate in top_matches(&scored, |c| c.matched_weak_roles.iter().any(|r| r == role)) {
+        for candidate in top_matches(&scored, tie_break, |c| {
+            c.matched_weak_roles.iter().any(|r| r == role)
+        }) {
             if picked.insert(candidate.card.name.clone()) {
                 candidates.push(candidate.clone());
             }
         }
     }
     for theme in sorted_themes {
-        for candidate in top_matches(&scored, |c| c.matched_themes.iter().any(|t| t == theme)) {
+        for candidate in top_matches(&scored, tie_break, |c| {
+            c.matched_themes.iter().any(|t| t == theme)
+        }) {
             if picked.insert(candidate.card.name.clone()) {
                 candidates.push(candidate.clone());
             }
         }
     }
 
-    sort_desc_by_score_then_name(&mut candidates, |c| c.score as f64, |c| &c.card.name);
+    sort_candidates(&mut candidates, |c| c.score, |c| &c.card, tie_break);
     Ok(candidates)
 }
 
 /// Les `CANDIDATE_LIMIT_PER_BUCKET` meilleurs Candidats scorés qui vérifient
-/// `matches`, classés par score puis par nom (comme le tri final).
-fn top_matches(scored: &[Candidate], matches: impl Fn(&Candidate) -> bool) -> Vec<&Candidate> {
+/// `matches`, classés comme au tri final.
+fn top_matches(
+    scored: &[Candidate],
+    tie_break: TieBreak,
+    matches: impl Fn(&Candidate) -> bool,
+) -> Vec<&Candidate> {
     let mut ranked: Vec<&Candidate> = scored.iter().filter(|c| matches(c)).collect();
-    sort_desc_by_score_then_name(&mut ranked, |c| c.score as f64, |c| &c.card.name);
+    sort_candidates(&mut ranked, |c| c.score, |c| &c.card, tie_break);
     ranked.truncate(CANDIDATE_LIMIT_PER_BUCKET);
     ranked
 }
@@ -177,6 +187,7 @@ mod tests {
             &deck(&["G"], &["Rampant Growth"]),
             &HashSet::new(),
             &["ramp".to_string()],
+            TieBreak::EdhrecRankFirst,
         )
         .unwrap();
 
@@ -203,6 +214,7 @@ mod tests {
             &deck(&["G", "R"], &[]),
             &major_themes,
             &["ramp".to_string()],
+            TieBreak::EdhrecRankFirst,
         )
         .unwrap();
 
@@ -222,7 +234,14 @@ mod tests {
     #[test]
     fn excludes_zero_score_candidates() {
         let (_dir, db) = fixture_db();
-        let candidates = find_candidates(&db, &deck(&["G"], &[]), &HashSet::new(), &[]).unwrap();
+        let candidates = find_candidates(
+            &db,
+            &deck(&["G"], &[]),
+            &HashSet::new(),
+            &[],
+            TieBreak::EdhrecRankFirst,
+        )
+        .unwrap();
         assert!(
             !candidates.iter().any(|c| c.card.name == "Grizzly Bears"),
             "vanilla creature matches nothing, should be excluded"
@@ -238,6 +257,7 @@ mod tests {
             &deck(&["G"], &[]),
             &HashSet::new(),
             &["ramp".to_string()],
+            TieBreak::EdhrecRankFirst,
         )
         .unwrap();
 
@@ -259,6 +279,7 @@ mod tests {
             &deck(&["G"], &[]),
             &HashSet::new(),
             &["ramp".to_string()],
+            TieBreak::EdhrecRankFirst,
         )
         .unwrap();
 
@@ -280,7 +301,14 @@ mod tests {
         let mut major_themes = HashSet::new();
         major_themes.insert("tribal:Elf".to_string());
 
-        let candidates = find_candidates(&db, &deck(&["G"], &[]), &major_themes, &[]).unwrap();
+        let candidates = find_candidates(
+            &db,
+            &deck(&["G"], &[]),
+            &major_themes,
+            &[],
+            TieBreak::EdhrecRankFirst,
+        )
+        .unwrap();
 
         assert_eq!(candidates.len(), CANDIDATE_LIMIT_PER_BUCKET);
         let unique: HashSet<&str> = candidates.iter().map(|c| c.card.name.as_str()).collect();
@@ -301,6 +329,7 @@ mod tests {
             &deck(&["G"], &[]),
             &major_themes,
             &["ramp".to_string()],
+            TieBreak::EdhrecRankFirst,
         )
         .unwrap();
 
