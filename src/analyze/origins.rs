@@ -1,29 +1,9 @@
-use crate::model::AnalyzeResult;
+use crate::model::{AnalyzeResult, Origin};
 
-/// Provenance d'une Suggestion (CONTEXT.md) : Candidat de `kb`,
-/// Recommandation externe d'une Source, sinon investigation hors de ces listes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Origin {
-    Kb,
-    Edhrec,
-    Recommander,
-    Investigation,
-}
-
-impl Origin {
-    /// Libellé du badge dans le Rapport d'analyse.
-    pub fn label(self) -> &'static str {
-        match self {
-            Origin::Kb => "kb",
-            Origin::Edhrec => "edhrec",
-            Origin::Recommander => "recommander",
-            Origin::Investigation => "investigation",
-        }
-    }
-}
-
-/// Origines de la Suggestion `card_name`, dans l'ordre `kb`, `edhrec`,
-/// `recommander` ; `Investigation` seule si aucune liste ne la contient.
+/// Origines de la Carte `card_name` parmi les Candidats et les Recommandations
+/// externes, dans l'ordre `kb`, `edhrec`, `recommander` ; `Investigation` seule
+/// si aucune liste ne la contient. Même règle pour les Candidats, les
+/// Recommandations externes et les Suggestions du Rapport.
 pub fn origins_of(analysis: &AnalyzeResult, card_name: &str) -> Vec<Origin> {
     let mut origins = Vec::new();
     if analysis.candidates.iter().any(|c| c.card.name == card_name) {
@@ -49,6 +29,48 @@ pub fn origins_of(analysis: &AnalyzeResult, card_name: &str) -> Vec<Origin> {
         origins.push(Origin::Investigation);
     }
     origins
+}
+
+/// Renseigne les Origines de chaque Candidat et de chaque Recommandation
+/// externe, une fois toutes les listes connues.
+pub fn assign_origins(analysis: &mut AnalyzeResult) {
+    let candidates: Vec<_> = analysis
+        .candidates
+        .iter()
+        .map(|c| origins_of(analysis, &c.card.name))
+        .collect();
+    let edhrec: Vec<_> = analysis
+        .external
+        .edhrec_recommendations
+        .iter()
+        .map(|r| origins_of(analysis, &r.card.name))
+        .collect();
+    let recommander: Vec<_> = analysis
+        .external
+        .recommander_recommendations
+        .iter()
+        .map(|r| origins_of(analysis, &r.card.name))
+        .collect();
+
+    for (c, o) in analysis.candidates.iter_mut().zip(candidates) {
+        c.origins = o;
+    }
+    for (r, o) in analysis
+        .external
+        .edhrec_recommendations
+        .iter_mut()
+        .zip(edhrec)
+    {
+        r.origins = o;
+    }
+    for (r, o) in analysis
+        .external
+        .recommander_recommendations
+        .iter_mut()
+        .zip(recommander)
+    {
+        r.origins = o;
+    }
 }
 
 #[cfg(test)]
@@ -85,6 +107,7 @@ mod tests {
                 score: 2,
                 matched_themes: vec![],
                 matched_weak_roles: vec!["ramp".to_string()],
+                origins: vec![],
             }],
             external: ExternalSources {
                 edhrec_recommendations: vec![EdhrecRecommendation {
@@ -92,10 +115,12 @@ mod tests {
                     synergy: 0.1,
                     inclusion_rate: 0.9,
                     header: "High Synergy Cards".to_string(),
+                    origins: vec![],
                 }],
                 recommander_recommendations: vec![RecommanderRecommendation {
                     card: card("Cultivate"),
                     score: 3.0,
+                    origins: vec![],
                 }],
                 ..ExternalSources::default()
             },
@@ -139,6 +164,7 @@ mod tests {
                 synergy: 0.2,
                 inclusion_rate: 0.5,
                 header: "Top Cards".to_string(),
+                origins: vec![],
             });
         assert_eq!(
             origins_of(&analysis, "Rampant Growth"),

@@ -5,9 +5,10 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use super::origins::{Origin, origins_of};
 use super::validate::validate_suggestions;
+use crate::analyze::origins::origins_of;
 use crate::db::cards::CardsDb;
+use crate::model::Origin;
 use crate::model::{AnalyzeResult, Card, EnrichedAnalysis, ReferencePrinting, Verdict};
 
 /// Ce que `prepare` lit de la Base cartes (Corrections comprises, ADR 0005).
@@ -269,6 +270,7 @@ mod tests {
                     score: 2,
                     matched_themes: vec![],
                     matched_weak_roles: vec!["ramp".to_string()],
+                    origins: vec![],
                 }],
                 external: ExternalSources {
                     edhrec_recommendations: vec![EdhrecRecommendation {
@@ -276,10 +278,12 @@ mod tests {
                         synergy: 0.4,
                         inclusion_rate: 0.9,
                         header: "Top Cards".to_string(),
+                        origins: vec![],
                     }],
                     recommander_recommendations: vec![RecommanderRecommendation {
                         card: green("Cultivate"),
                         score: 3.0,
+                        origins: vec![],
                     }],
                     ..ExternalSources::default()
                 },

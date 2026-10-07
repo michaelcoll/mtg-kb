@@ -151,6 +151,7 @@ pub fn fetch_and_filter(
             synergy: meta.synergy,
             inclusion_rate: meta.inclusion_rate,
             header: meta.header,
+            origins: vec![],
         })
         .collect();
     Ok((recommendations, unresolved_names))

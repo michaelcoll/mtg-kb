@@ -5,11 +5,10 @@ use crate::model::{
     SourceError, Synergy, UnresolvedLine, Verdict,
 };
 
-mod origins;
 mod prepare;
 mod validate;
 
-pub use origins::Origin;
+pub use crate::model::Origin;
 pub use prepare::{CardPrintings, PrintingLookup, ReportModel, ValidatedSuggestion, prepare};
 
 pub fn slugify(name: &str) -> String {
@@ -920,6 +919,7 @@ mod tests {
             synergy: 0.42,
             inclusion_rate: 0.9,
             header: "High Synergy Cards".to_string(),
+            origins: vec![],
         }];
         let html = render(&model(enriched));
         assert!(html.contains("Recommandations externes non retenues"));
@@ -935,6 +935,7 @@ mod tests {
             synergy: 0.42,
             inclusion_rate: 0.9,
             header: "High Synergy Cards".to_string(),
+            origins: vec![],
         }];
         // "Rampant Growth" est déjà une Suggestion retenue (voir `sample()`) :
         // l'annexe ne doit pas la lister une seconde fois.
@@ -1028,6 +1029,7 @@ mod tests {
             synergy: 0.42,
             inclusion_rate: 0.9,
             header: "High Synergy Cards".to_string(),
+            origins: vec![],
         }];
         let mut model = model(enriched);
         model.card_printings.insert(

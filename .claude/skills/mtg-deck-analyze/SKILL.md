@@ -9,7 +9,7 @@ description: Analyzes a Commander Deck (kb analyze â†’ Verdict and Suggestions â
 
 ## Workflow
 
-1. **Analyze**: `kb analyze <file|->` produces the JSON: Roles, weaknesses, Themes, Synergies, `candidates` and external Recommendations (`edhrec_recommendations`, `recommander_recommendations`, disabled by `--offline`).
+1. **Analyze**: `kb analyze <file|->` produces the JSON: Roles, weaknesses, Themes, Synergies, `candidates` and external Recommendations (`edhrec_recommendations`, `recommander_recommendations`, disabled by `--offline`). Each candidate and external Recommendation carries its `origins` (`kb`, `edhrec`, `recommander`); several Origins mark a consensus.
    - Missing or ambiguous Commander: fix the Decklist with the user, then rerun.
    - Report `unresolved` Cards and `source_errors` to the user; the analysis stays valid. Empty external Recommendations without `source_errors` are normal (Recommander returns nothing for a Decklist that is too short).
 
