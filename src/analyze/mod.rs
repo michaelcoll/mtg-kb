@@ -16,7 +16,7 @@ use crate::model::{AnalyzeResult, ExternalSources, ResolvedCard, Synergy, Unreso
 
 const REQUIRED_DECK_SIZE: u32 = 100;
 
-const MAJOR_THEME_MIN_CARDS: u32 = 8;
+pub(crate) const MAJOR_THEME_MIN_CARDS: u32 = 8;
 
 /// Erreur uniquement si le Commandant est ambigu (0 ou 2+) : Cartes non
 /// résolues et écarts de validation sont reportés dans le résultat.

@@ -57,6 +57,9 @@ fn analyze_deck(
 }
 
 #[cfg(test)]
+mod personal_decklists;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::fixture::{CardsFixture, FixtureCard};

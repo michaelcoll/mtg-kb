@@ -94,6 +94,22 @@ mise run format    # cargo fmt                (alias: f)
 mise run checks    # test + lint + fmt-check
 ```
 
+### Non-régression sur des Decklists personnelles
+
+Déposez vos Decklists (`*.txt`) dans `data/decks/` (hors dépôt, comme tout
+`data/`), puis :
+
+```sh
+mise run regression   # cargo test personal_decklists -- --ignored --nocapture
+```
+
+Chaque Decklist est analysée hors ligne (comme `kb analyze --offline`) sur la
+vraie Base cartes. Le test échoue si une analyse échoue ou si un Rôle
+sous-représenté ou un Thème majeur n'a aucun Candidat. Il imprime les
+Candidats de chaque Decklist, pour comparer avant et après un changement.
+Il est ignoré par `mise run test` et sauté si `data/decks/` ou la Base cartes
+est absent. `KB_DATA_DIR` change le dossier lu.
+
 ## Pour aller plus loin
 
 - `CONTEXT.md` — vocabulaire du domaine (Carte, Deck, Rôle, Thème, Point
