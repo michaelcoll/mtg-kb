@@ -24,7 +24,7 @@ alias = ["i"]
 
 [tasks.test]
 description = "Runs the test suite"
-run = "cargo nextest run"
+run = "cargo nextest run --status-level slow"
 alias = ["t"]
 
 [tasks.regression]
