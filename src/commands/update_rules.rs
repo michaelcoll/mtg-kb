@@ -1,6 +1,8 @@
 use std::path::Path;
+use std::sync::LazyLock;
 
 use anyhow::{Context, Result, bail};
+use regex::Regex;
 
 use crate::data_dir::rules_db_path;
 use crate::db::rules::RulesDb;
@@ -87,17 +89,68 @@ fn discover_latest_rules_url() -> Result<String> {
         .context("téléchargement de la page des règles Wizards")?
         .text()
         .context("lecture de la page des règles Wizards")?;
-    let re = regex::Regex::new(r#"https://media\.wizards\.com/[^"'\s]+?\.txt"#).unwrap();
-    re.find(&html)
-        .map(|m| m.as_str().to_string())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "impossible de trouver l'URL du fichier .txt des règles sur {RULES_INDEX_URL}"
-            )
-        })
+    extract_rules_url(&html).ok_or_else(|| {
+        anyhow::anyhow!(
+            "impossible de trouver l'URL du fichier .txt des règles sur {RULES_INDEX_URL}"
+        )
+    })
+}
+
+/// Premier lien `.txt` de `media.wizards.com` de la page, espaces encodés en `%20`.
+/// Le nom de fichier peut contenir des espaces littéraux ; guillemets, `<`, `>` et
+/// retours à la ligne et tabulations bornent le lien.
+fn extract_rules_url(html: &str) -> Option<String> {
+    static RULES_URL: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"https://media\.wizards\.com/[^"'<>\r\n\t]+?\.txt"#).unwrap()
+    });
+    RULES_URL.find(html).map(|m| m.as_str().replace(' ', "%20"))
 }
 
 fn atomic_swap(tmp_path: &Path, final_path: &Path) -> Result<()> {
     std::fs::rename(tmp_path, final_path)
         .with_context(|| format!("remplacement atomique de {}", final_path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ENCODED: &str = "https://media.wizards.com/2026/downloads/MagicCompRules%2020260925.txt";
+
+    #[test]
+    fn extracts_link_with_literal_space() {
+        let html = r#"<a href="https://media.wizards.com/2026/downloads/MagicCompRules 20260925.txt" class="x">Règles</a>"#;
+        let url = extract_rules_url(html).unwrap();
+        assert_eq!(url, ENCODED);
+        assert_eq!(version_from_url(&url).as_deref(), Some("20260925"));
+    }
+
+    #[test]
+    fn already_encoded_link_is_not_double_encoded() {
+        let html = format!(r#"<a href="{ENCODED}">Règles</a>"#);
+        let url = extract_rules_url(&html).unwrap();
+        assert_eq!(url, ENCODED);
+        assert_eq!(version_from_url(&url).as_deref(), Some("20260925"));
+    }
+
+    #[test]
+    fn extracts_link_from_escaped_json_string() {
+        let html = r#"{\"href\":\"https://media.wizards.com/2026/downloads/MagicCompRules 20260925.txt\",\"t\":1}"#;
+        // Le lien s'arrête au `.txt` ; le `\` d'échappement n'en fait pas partie.
+        assert_eq!(extract_rules_url(html).as_deref(), Some(ENCODED));
+    }
+
+    #[test]
+    fn link_stops_at_txt_before_following_attributes() {
+        let html = r#"<a href="https://media.wizards.com/2026/downloads/MagicCompRules 20260925.txt" title="a b.txt" target="_blank">x</a>"#;
+        assert_eq!(extract_rules_url(html).as_deref(), Some(ENCODED));
+    }
+
+    #[test]
+    fn no_txt_link_returns_none() {
+        let html = "<a href=\"https://media.wizards.com/2026/downloads/rules.pdf\">PDF</a>\n\
+<a href=\"https://example.com/rules.txt\">autre</a>\n\
+https://media.wizards.com/2026/downloads/Magic\tRules.txt";
+        assert_eq!(extract_rules_url(html), None);
+    }
 }
